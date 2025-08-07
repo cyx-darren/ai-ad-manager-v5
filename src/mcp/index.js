@@ -1,8 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BetaAnalyticsDataClient } from '@google-analytics/data';
-import { GoogleAuth } from 'google-auth-library';
+import { GoogleAnalyticsCore } from '../core/analytics-core.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -21,23 +20,13 @@ class GoogleAnalyticsMCPServer {
       }
     );
 
-    this.analyticsDataClient = null;
-    this.propertyId = process.env.GA_PROPERTY_ID;
+    this.analyticsCore = new GoogleAnalyticsCore();
     
     this.setupToolHandlers();
   }
 
   async initializeGoogleAnalytics() {
-    if (this.analyticsDataClient) return;
-
-    const auth = new GoogleAuth({
-      keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-      scopes: ['https://www.googleapis.com/auth/analytics.readonly'],
-    });
-
-    this.analyticsDataClient = new BetaAnalyticsDataClient({
-      auth: auth,
-    });
+    await this.analyticsCore.initialize();
   }
 
   setupToolHandlers() {
@@ -274,20 +263,7 @@ class GoogleAnalyticsMCPServer {
 
   async queryAnalytics(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dateRanges: [
-          {
-            startDate: args.startDate,
-            endDate: args.endDate,
-          },
-        ],
-        dimensions: args.dimensions.map(name => ({ name })),
-        metrics: args.metrics.map(name => ({ name })),
-        limit: args.limit || 100,
-      };
-
-      const [response] = await this.analyticsDataClient.runReport(request);
+      const response = await this.analyticsCore.queryAnalytics(args);
       
       return {
         content: [
@@ -309,13 +285,7 @@ class GoogleAnalyticsMCPServer {
 
   async getRealtimeData(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dimensions: (args.dimensions || []).map(name => ({ name })),
-        metrics: (args.metrics || ['activeUsers']).map(name => ({ name })),
-      };
-
-      const [response] = await this.analyticsDataClient.runRealtimeReport(request);
+      const response = await this.analyticsCore.getRealtimeData(args);
       
       return {
         content: [
@@ -337,29 +307,7 @@ class GoogleAnalyticsMCPServer {
 
   async getTrafficSources(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dateRanges: [
-          {
-            startDate: args.startDate,
-            endDate: args.endDate,
-          },
-        ],
-        dimensions: [
-          { name: 'sessionSource' },
-          { name: 'sessionMedium' },
-          { name: 'sessionCampaignName' },
-        ],
-        metrics: [
-          { name: 'sessions' },
-          { name: 'totalUsers' },
-          { name: 'bounceRate' },
-          { name: 'averageSessionDuration' },
-        ],
-        limit: args.limit || 100,
-      };
-
-      const [response] = await this.analyticsDataClient.runReport(request);
+      const response = await this.analyticsCore.getTrafficSources(args);
       
       return {
         content: [
@@ -381,29 +329,7 @@ class GoogleAnalyticsMCPServer {
 
   async getUserDemographics(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dateRanges: [
-          {
-            startDate: args.startDate,
-            endDate: args.endDate,
-          },
-        ],
-        dimensions: [
-          { name: 'country' },
-          { name: 'city' },
-          { name: 'userAgeBracket' },
-          { name: 'userGender' },
-        ],
-        metrics: [
-          { name: 'totalUsers' },
-          { name: 'sessions' },
-          { name: 'screenPageViews' },
-        ],
-        limit: args.limit || 100,
-      };
-
-      const [response] = await this.analyticsDataClient.runReport(request);
+      const response = await this.analyticsCore.getUserDemographics(args);
       
       return {
         content: [
@@ -425,34 +351,7 @@ class GoogleAnalyticsMCPServer {
 
   async getPagePerformance(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dateRanges: [
-          {
-            startDate: args.startDate,
-            endDate: args.endDate,
-          },
-        ],
-        dimensions: [
-          { name: 'pagePath' },
-          { name: 'pageTitle' },
-        ],
-        metrics: [
-          { name: 'screenPageViews' },
-          { name: 'averageSessionDuration' },
-          { name: 'bounceRate' },
-          { name: 'exitRate' },
-        ],
-        limit: args.limit || 100,
-        orderBys: [
-          {
-            metric: { metricName: 'screenPageViews' },
-            desc: true,
-          },
-        ],
-      };
-
-      const [response] = await this.analyticsDataClient.runReport(request);
+      const response = await this.analyticsCore.getPagePerformance(args);
       
       return {
         content: [
@@ -474,34 +373,7 @@ class GoogleAnalyticsMCPServer {
 
   async getConversionData(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dateRanges: [
-          {
-            startDate: args.startDate,
-            endDate: args.endDate,
-          },
-        ],
-        dimensions: [
-          { name: 'eventName' },
-          { name: 'sessionSource' },
-          { name: 'sessionMedium' },
-        ],
-        metrics: [
-          { name: 'eventCount' },
-          { name: 'conversions' },
-          { name: 'totalRevenue' },
-        ],
-        limit: args.limit || 100,
-        orderBys: [
-          {
-            metric: { metricName: 'conversions' },
-            desc: true,
-          },
-        ],
-      };
-
-      const [response] = await this.analyticsDataClient.runReport(request);
+      const response = await this.analyticsCore.getConversionData(args);
       
       return {
         content: [
@@ -523,43 +395,7 @@ class GoogleAnalyticsMCPServer {
 
   async getCustomReport(args) {
     try {
-      const request = {
-        property: `properties/${this.propertyId}`,
-        dateRanges: [
-          {
-            startDate: args.startDate,
-            endDate: args.endDate,
-          },
-        ],
-        dimensions: args.dimensions.map(name => ({ name })),
-        metrics: args.metrics.map(name => ({ name })),
-        limit: args.limit || 100,
-      };
-
-      if (args.orderBy && args.orderBy.length > 0) {
-        request.orderBys = args.orderBy.map(order => ({
-          metric: { metricName: order.metric },
-          desc: order.desc !== false,
-        }));
-      }
-
-      if (args.filters && args.filters.length > 0) {
-        request.dimensionFilter = {
-          andGroup: {
-            expressions: args.filters.map(filter => ({
-              filter: {
-                fieldName: filter.fieldName,
-                stringFilter: {
-                  matchType: filter.operation === 'exact' ? 'EXACT' : 'CONTAINS',
-                  value: filter.value,
-                },
-              },
-            })),
-          },
-        };
-      }
-
-      const [response] = await this.analyticsDataClient.runReport(request);
+      const response = await this.analyticsCore.getCustomReport(args);
       
       return {
         content: [

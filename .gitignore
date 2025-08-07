@@ -88,3 +88,15 @@ public
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary test files (exclude legitimate test files)
+debug-*.tmp
+temp-test-*.js
+temp-test-*.cjs
