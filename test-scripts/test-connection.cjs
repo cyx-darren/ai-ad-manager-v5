@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-require('dotenv').config({ path: '../.env' });
+require('dotenv').config(); // This will automatically use ./.env
 const { BetaAnalyticsDataClient } = require('@google-analytics/data');
 
 async function testGoogleAnalyticsConnection() {

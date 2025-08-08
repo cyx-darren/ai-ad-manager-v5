@@ -1,0 +1,947 @@
+---
+description: Building an MVP analytics dashboard that: - Uses pure Supabase Authentication - Displays GA4 metrics from single property - Shows user-specific spend from PDFs - Uses React 18 + Next.js 14 + Tailwind CSS - Has Express backend with Supabase RLS - Mock data for impressions/clicks Keywords: dashboard, analytics, GA4, Supabase, authentication, PDF, spend, metrics
+alwaysApply: false
+---
+================================================================================
+CURSOR RULES - GOOGLE ANALYTICS DASHBOARD MVP
+VERSION 3.0 - PURE SUPABASE AUTH
+================================================================================
+
+# Project Context
+You are building an MVP analytics dashboard that:
+- Uses pure Supabase Authentication (no NextAuth/JWT complexity)
+- Displays GA4 metrics from a SINGLE property (MVP scope)
+- Shows user-specific spend data from uploaded PDFs
+- Uses mock data for impressions/clicks (with clear indicators)
+- Has Row Level Security (RLS) for data isolation
+- Maintains existing MCP server for AI agents
+
+# MVP vs Future Scope
+MVP (Current):
+- Single GA4 property for ALL users
+- User-specific spend data only
+- Mock impressions and click rate
+- Basic Supabase auth
+
+Future (Post-MVP):
+- Multi-tenant architecture
+- Multiple GA4 properties
+- Real impressions/clicks
+- Team management
+
+# Tech Stack
+- Frontend: React 18.3 + Next.js 14.2 + Tailwind CSS 3.4
+- Authentication: Supabase Auth (pure, no NextAuth)
+- Backend: Express.js + Node.js
+- Database: Supabase Cloud with RLS
+- File Processing: Multer + pdf-parse
+- Styling: Tailwind CSS (utility-first)
+- Charts: Recharts 2.12
+- GA4: Google Analytics Data API v4
+
+# Project Structure
+----
+google-analytics-mcp/
+├── src/
+│   ├── core/              # Shared GA4 logic
+│   ├── mcp/               # MCP server (DO NOT MODIFY)
+│   ├── api/
+│   │   ├── server.js      # Express API
+│   │   ├── middleware/
+│   │   │   └── auth.js    # Supabase token verification
+│   │   └── routes/
+│   └── db/
+│       └── supabase-client.js
+├── web/                   # Next.js frontend
+│   ├── app/
+│   │   ├── auth/         # Login/signup pages
+│   │   └── dashboard/    # Protected pages
+│   ├── components/
+│   └── lib/
+│       └── supabase.ts   # Supabase client
+└── uploads/              # PDF uploads directory
+----
+
+================================================================================
+CRITICAL RULES
+================================================================================
+
+## 1. NEVER Break the MCP Server
+- The MCP server in src/mcp/ is working
+- DO NOT modify unless explicitly asked
+- It uses stdio, not HTTP
+
+## 2. Supabase Auth Pattern
+- Use Supabase client SDK for ALL auth operations
+- No custom JWT handling needed
+- Supabase manages tokens automatically
+- Always verify tokens on backend with supabase.auth.getUser()
+
+## 3. Single GA4 Property (MVP)
+- ALL users see the SAME GA4 data
+- Only spend data is user-specific
+- Document this limitation clearly
+- Multi-tenant is FUTURE scope
+
+## 4. Row Level Security (RLS)
+- ALWAYS enable RLS on user tables
+- Users can only see their own data
+- Test RLS policies thoroughly
+- Use auth.uid() in policies
+
+## 5. Mock Data Rules
+- Impressions: Random 10,000-50,000
+- Click Rate: Random 2-5%
+- ALWAYS show "Mock Data" badge
+- Document replacement plan
+
+## 6. PDF Upload Rules
+- Max size: 10MB
+- Only PDF mime type
+- Store in uploads/ directory
+- Link to user_id
+
+================================================================================
+CODE STANDARDS - SUPABASE AUTH
+================================================================================
+
+## Backend - Supabase Client Setup
+----
+// src/db/supabase-client.js
+import { createClient } from '@supabase/supabase-js';
+
+// Admin client for backend operations
+export const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+// Regular client for auth verification
+export const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+----
+
+## Backend - Auth Middleware
+----
+// src/api/middleware/auth.js
+export const verifySupabaseToken = async (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  
+  if (error || !user) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  
+  req.user = user;
+  next();
+};
+----
+
+## Frontend - Supabase Client
+----
+// lib/supabase.ts
+import { createClient } from '@supabase/supabase-js'
+
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+----
+
+## Frontend - Auth Hook
+----
+// hooks/useAuth.ts
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import { User } from '@supabase/supabase-js'
+
+export function useAuth() {
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    // Get session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setLoading(false)
+    })
+
+    // Listen for changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null)
+      }
+    )
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  return { user, loading }
+}
+----
+
+## Frontend - Protected Route
+----
+// app/dashboard/page.tsx
+'use client'
+
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/useAuth'
+
+export default function Dashboard() {
+  const { user, loading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/auth/login')
+    }
+  }, [user, loading])
+
+  if (loading) return <div>Loading...</div>
+  if (!user) return null
+
+  return <div>Dashboard Content</div>
+}
+----
+
+## Frontend - API Call with Auth
+----
+const fetchData = async () => {
+  const { data: { session } } = await supabase.auth.getSession()
+  
+  const response = await fetch('/api/endpoint', {
+    headers: {
+      'Authorization': `Bearer ${session?.access_token}`
+    }
+  })
+  
+  return response.json()
+}
+----
+
+## Database - RLS Policies
+----
+-- ALWAYS enable RLS
+ALTER TABLE your_table ENABLE ROW LEVEL SECURITY;
+
+-- User can only see own data
+CREATE POLICY "Users view own data" 
+ON your_table FOR SELECT 
+USING (auth.uid() = user_id);
+
+-- User can only insert own data
+CREATE POLICY "Users insert own data" 
+ON your_table FOR INSERT 
+WITH CHECK (auth.uid() = user_id);
+----
+
+## Mock Data Implementation
+----
+// Always mark mock data clearly
+const getMockImpressions = () => {
+  return {
+    value: Math.floor(Math.random() * 40000) + 10000,
+    is_mock: true,
+    note: 'Will be replaced with real data post-MVP'
+  }
+}
+
+// Component display with badge
+<MetricCard
+  title="Total Impressions"
+  value={data.value}
+  badge={data.is_mock ? "Mock Data" : null}
+  badgeColor="yellow"
+/>
+----
+
+================================================================================
+COMMON PATTERNS
+================================================================================
+
+## Supabase Auth Flow
+----
+// Sign Up
+const { data, error } = await supabase.auth.signUp({
+  email: 'user@example.com',
+  password: 'password'
+})
+
+// Sign In
+const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'user@example.com',
+  password: 'password'
+})
+
+// Sign Out
+await supabase.auth.signOut()
+
+// Get Current User
+const { data: { user } } = await supabase.auth.getUser()
+
+// Get Session
+const { data: { session } } = await supabase.auth.getSession()
+----
+
+## Database Operations with RLS
+----
+// Insert (user_id automatically from RLS)
+const { data, error } = await supabase
+  .from('campaigns_spend')
+  .insert({
+    user_id: user.id,  // Must match auth.uid()
+    campaign_name: 'Campaign 1',
+    spend_amount: 1000
+  })
+
+// Select (RLS filters automatically)
+const { data, error } = await supabase
+  .from('campaigns_spend')
+  .select('*')
+  .gte('date', startDate)
+  .lte('date', endDate)
+// Returns only current user's data
+----
+
+## PDF Upload Pattern
+----
+// Frontend
+const uploadPDF = async (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  
+  const { data: { session } } = await supabase.auth.getSession()
+  
+  await fetch('/api/upload/pdf', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session?.access_token}`
+    },
+    body: formData
+  })
+}
+
+// Backend
+app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'), 
+  async (req, res) => {
+    const userId = req.user.id  // From Supabase auth
+    // Process PDF and save to database
+  }
+)
+----
+
+================================================================================
+ENVIRONMENT VARIABLES
+================================================================================
+
+## Backend (.env)
+----
+# GA4 (Single property for MVP)
+GA_PROPERTY_ID=your_property_id
+GOOGLE_APPLICATION_CREDENTIALS=./credentials.json
+
+# Supabase
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=xxxxx
+SUPABASE_SERVICE_KEY=xxxxx  # For admin operations
+
+# Server
+API_PORT=5000
+NODE_ENV=development
+----
+
+## Frontend (.env.local)
+----
+# Public Supabase (safe to expose)
+NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=xxxxx
+
+# API
+NEXT_PUBLIC_API_URL=http://localhost:5000
+----
+
+================================================================================
+TESTING COMMANDS
+================================================================================
+
+## Test Supabase Connection
+----
+node -e "const {createClient} = require('@supabase/supabase-js'); 
+const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); 
+console.log('Connected');"
+----
+
+## Create Test User (Supabase Dashboard)
+----
+1. Go to Authentication → Users
+2. Click "Add User"
+3. Email: test@example.com
+4. Password: Test123!
+----
+
+## Test Auth Flow
+----
+# Frontend auth test
+1. Sign up: http://localhost:3000/auth/signup
+2. Check user in Supabase Dashboard
+3. Login: http://localhost:3000/auth/login
+4. Access dashboard (should work)
+5. Logout and try dashboard (should redirect)
+----
+
+## Test RLS
+----
+# As User A, create data
+# Login as User B
+# User B should NOT see User A's data
+----
+
+================================================================================
+DO NOT
+================================================================================
+
+- Create custom JWT handling (Supabase does it)
+- Skip RLS policies
+- Forget mock data badges
+- Mix user data between accounts
+- Modify MCP server
+- Store GA4 credentials per user (MVP is single property)
+- Implement multi-tenant features (save for post-MVP)
+
+================================================================================
+ALWAYS
+================================================================================
+
+- Use Supabase client for auth
+- Enable RLS on user tables
+- Mark mock data clearly
+- Verify tokens on backend
+- Test auth flow completely
+- Use auth.uid() in RLS policies
+- Document MVP limitations
+- Keep GA4 property single for MVP
+
+================================================================================
+MVP LIMITATIONS (DOCUMENT THESE)
+================================================================================
+
+1. Single GA4 Property
+   - All users see same analytics
+   - Cannot connect different GA4 accounts
+   - Multi-tenant is future scope
+
+2. Mock Data
+   - Impressions are random 10K-50K
+   - Click rate is random 2-5%
+   - Will be replaced post-MVP
+
+3. Basic Features
+   - No team management
+   - No advanced permissions
+   - No data export (yet)
+
+================================================================================
+QUICK DEBUGGING
+================================================================================
+
+## Issue: User can't login
+Check: Supabase Dashboard → Authentication → Users
+Check: Email confirmed? Password correct?
+
+## Issue: 401 Unauthorized
+Check: Token in Authorization header?
+Check: Token format: "Bearer xxxxx"
+Check: Token not expired?
+
+## Issue: User sees wrong data
+Check: RLS policies enabled?
+Check: user_id matches auth.uid()?
+Check: Database query includes user_id filter?
+
+## Issue: Mock data not showing badge
+Check: is_mock flag passed to component?
+Check: Badge component rendering?
+
+================================================================================
+END OF RULES
+================================================================================================================================================================
+CURSOR RULES - GOOGLE ANALYTICS DASHBOARD MVP
+VERSION 3.0 - PURE SUPABASE AUTH
+================================================================================
+
+# Project Context
+You are building an MVP analytics dashboard that:
+- Uses pure Supabase Authentication (no NextAuth/JWT complexity)
+- Displays GA4 metrics from a SINGLE property (MVP scope)
+- Shows user-specific spend data from uploaded PDFs
+- Uses mock data for impressions/clicks (with clear indicators)
+- Has Row Level Security (RLS) for data isolation
+- Maintains existing MCP server for AI agents
+
+# MVP vs Future Scope
+MVP (Current):
+- Single GA4 property for ALL users
+- User-specific spend data only
+- Mock impressions and click rate
+- Basic Supabase auth
+
+Future (Post-MVP):
+- Multi-tenant architecture
+- Multiple GA4 properties
+- Real impressions/clicks
+- Team management
+
+# Tech Stack
+- Frontend: React 18.3 + Next.js 14.2 + Tailwind CSS 3.4
+- Authentication: Supabase Auth (pure, no NextAuth)
+- Backend: Express.js + Node.js
+- Database: Supabase Cloud with RLS
+- File Processing: Multer + pdf-parse
+- Styling: Tailwind CSS (utility-first)
+- Charts: Recharts 2.12
+- GA4: Google Analytics Data API v4
+
+# Project Structure
+----
+google-analytics-mcp/
+├── src/
+│   ├── core/              # Shared GA4 logic
+│   ├── mcp/               # MCP server (DO NOT MODIFY)
+│   ├── api/
+│   │   ├── server.js      # Express API
+│   │   ├── middleware/
+│   │   │   └── auth.js    # Supabase token verification
+│   │   └── routes/
+│   └── db/
+│       └── supabase-client.js
+├── web/                   # Next.js frontend
+│   ├── app/
+│   │   ├── auth/         # Login/signup pages
+│   │   └── dashboard/    # Protected pages
+│   ├── components/
+│   └── lib/
+│       └── supabase.ts   # Supabase client
+└── uploads/              # PDF uploads directory
+----
+
+================================================================================
+CRITICAL RULES
+================================================================================
+
+## 1. NEVER Break the MCP Server
+- The MCP server in src/mcp/ is working
+- DO NOT modify unless explicitly asked
+- It uses stdio, not HTTP
+
+## 2. Supabase Auth Pattern
+- Use Supabase client SDK for ALL auth operations
+- No custom JWT handling needed
+- Supabase manages tokens automatically
+- Always verify tokens on backend with supabase.auth.getUser()
+
+## 3. Single GA4 Property (MVP)
+- ALL users see the SAME GA4 data
+- Only spend data is user-specific
+- Document this limitation clearly
+- Multi-tenant is FUTURE scope
+
+## 4. Row Level Security (RLS)
+- ALWAYS enable RLS on user tables
+- Users can only see their own data
+- Test RLS policies thoroughly
+- Use auth.uid() in policies
+
+## 5. Mock Data Rules
+- Impressions: Random 10,000-50,000
+- Click Rate: Random 2-5%
+- ALWAYS show "Mock Data" badge
+- Document replacement plan
+
+## 6. PDF Upload Rules
+- Max size: 10MB
+- Only PDF mime type
+- Store in uploads/ directory
+- Link to user_id
+
+================================================================================
+CODE STANDARDS - SUPABASE AUTH
+================================================================================
+
+## Backend - Supabase Client Setup
+----
+// src/db/supabase-client.js
+import { createClient } from '@supabase/supabase-js';
+
+// Admin client for backend operations
+export const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+// Regular client for auth verification
+export const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+----
+
+## Backend - Auth Middleware
+----
+// src/api/middleware/auth.js
+export const verifySupabaseToken = async (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  
+  if (error || !user) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  
+  req.user = user;
+  next();
+};
+----
+
+## Frontend - Supabase Client
+----
+// lib/supabase.ts
+import { createClient } from '@supabase/supabase-js'
+
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+----
+
+## Frontend - Auth Hook
+----
+// hooks/useAuth.ts
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import { User } from '@supabase/supabase-js'
+
+export function useAuth() {
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    // Get session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setLoading(false)
+    })
+
+    // Listen for changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null)
+      }
+    )
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  return { user, loading }
+}
+----
+
+## Frontend - Protected Route
+----
+// app/dashboard/page.tsx
+'use client'
+
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/useAuth'
+
+export default function Dashboard() {
+  const { user, loading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/auth/login')
+    }
+  }, [user, loading])
+
+  if (loading) return <div>Loading...</div>
+  if (!user) return null
+
+  return <div>Dashboard Content</div>
+}
+----
+
+## Frontend - API Call with Auth
+----
+const fetchData = async () => {
+  const { data: { session } } = await supabase.auth.getSession()
+  
+  const response = await fetch('/api/endpoint', {
+    headers: {
+      'Authorization': `Bearer ${session?.access_token}`
+    }
+  })
+  
+  return response.json()
+}
+----
+
+## Database - RLS Policies
+----
+-- ALWAYS enable RLS
+ALTER TABLE your_table ENABLE ROW LEVEL SECURITY;
+
+-- User can only see own data
+CREATE POLICY "Users view own data" 
+ON your_table FOR SELECT 
+USING (auth.uid() = user_id);
+
+-- User can only insert own data
+CREATE POLICY "Users insert own data" 
+ON your_table FOR INSERT 
+WITH CHECK (auth.uid() = user_id);
+----
+
+## Mock Data Implementation
+----
+// Always mark mock data clearly
+const getMockImpressions = () => {
+  return {
+    value: Math.floor(Math.random() * 40000) + 10000,
+    is_mock: true,
+    note: 'Will be replaced with real data post-MVP'
+  }
+}
+
+// Component display with badge
+<MetricCard
+  title="Total Impressions"
+  value={data.value}
+  badge={data.is_mock ? "Mock Data" : null}
+  badgeColor="yellow"
+/>
+----
+
+================================================================================
+COMMON PATTERNS
+================================================================================
+
+## Supabase Auth Flow
+----
+// Sign Up
+const { data, error } = await supabase.auth.signUp({
+  email: 'user@example.com',
+  password: 'password'
+})
+
+// Sign In
+const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'user@example.com',
+  password: 'password'
+})
+
+// Sign Out
+await supabase.auth.signOut()
+
+// Get Current User
+const { data: { user } } = await supabase.auth.getUser()
+
+// Get Session
+const { data: { session } } = await supabase.auth.getSession()
+----
+
+## Database Operations with RLS
+----
+// Insert (user_id automatically from RLS)
+const { data, error } = await supabase
+  .from('campaigns_spend')
+  .insert({
+    user_id: user.id,  // Must match auth.uid()
+    campaign_name: 'Campaign 1',
+    spend_amount: 1000
+  })
+
+// Select (RLS filters automatically)
+const { data, error } = await supabase
+  .from('campaigns_spend')
+  .select('*')
+  .gte('date', startDate)
+  .lte('date', endDate)
+// Returns only current user's data
+----
+
+## PDF Upload Pattern
+----
+// Frontend
+const uploadPDF = async (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  
+  const { data: { session } } = await supabase.auth.getSession()
+  
+  await fetch('/api/upload/pdf', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session?.access_token}`
+    },
+    body: formData
+  })
+}
+
+// Backend
+app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'), 
+  async (req, res) => {
+    const userId = req.user.id  // From Supabase auth
+    // Process PDF and save to database
+  }
+)
+----
+
+================================================================================
+ENVIRONMENT VARIABLES
+================================================================================
+
+## Backend (.env)
+----
+# GA4 (Single property for MVP)
+GA_PROPERTY_ID=your_property_id
+GOOGLE_APPLICATION_CREDENTIALS=./credentials.json
+
+# Supabase
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=xxxxx
+SUPABASE_SERVICE_KEY=xxxxx  # For admin operations
+
+# Server
+API_PORT=5000
+NODE_ENV=development
+----
+
+## Frontend (.env.local)
+----
+# Public Supabase (safe to expose)
+NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=xxxxx
+
+# API
+NEXT_PUBLIC_API_URL=http://localhost:5000
+----
+
+================================================================================
+TESTING COMMANDS
+================================================================================
+
+## Test Supabase Connection
+----
+node -e "const {createClient} = require('@supabase/supabase-js'); 
+const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); 
+console.log('Connected');"
+----
+
+## Create Test User (Supabase Dashboard)
+----
+1. Go to Authentication → Users
+2. Click "Add User"
+3. Email: test@example.com
+4. Password: Test123!
+----
+
+## Test Auth Flow
+----
+# Frontend auth test
+1. Sign up: http://localhost:3000/auth/signup
+2. Check user in Supabase Dashboard
+3. Login: http://localhost:3000/auth/login
+4. Access dashboard (should work)
+5. Logout and try dashboard (should redirect)
+----
+
+## Test RLS
+----
+# As User A, create data
+# Login as User B
+# User B should NOT see User A's data
+----
+
+================================================================================
+DO NOT
+================================================================================
+
+- Create custom JWT handling (Supabase does it)
+- Skip RLS policies
+- Forget mock data badges
+- Mix user data between accounts
+- Modify MCP server
+- Store GA4 credentials per user (MVP is single property)
+- Implement multi-tenant features (save for post-MVP)
+
+================================================================================
+ALWAYS
+================================================================================
+
+- Use Supabase client for auth
+- Enable RLS on user tables
+- Mark mock data clearly
+- Verify tokens on backend
+- Test auth flow completely
+- Use auth.uid() in RLS policies
+- Document MVP limitations
+- Keep GA4 property single for MVP
+
+================================================================================
+MVP LIMITATIONS (DOCUMENT THESE)
+================================================================================
+
+1. Single GA4 Property
+   - All users see same analytics
+   - Cannot connect different GA4 accounts
+   - Multi-tenant is future scope
+
+2. Mock Data
+   - Impressions are random 10K-50K
+   - Click rate is random 2-5%
+   - Will be replaced post-MVP
+
+3. Basic Features
+   - No team management
+   - No advanced permissions
+   - No data export (yet)
+
+================================================================================
+QUICK DEBUGGING
+================================================================================
+
+## Issue: User can't login
+Check: Supabase Dashboard → Authentication → Users
+Check: Email confirmed? Password correct?
+
+## Issue: 401 Unauthorized
+Check: Token in Authorization header?
+Check: Token format: "Bearer xxxxx"
+Check: Token not expired?
+
+## Issue: User sees wrong data
+Check: RLS policies enabled?
+Check: user_id matches auth.uid()?
+Check: Database query includes user_id filter?
+
+## Issue: Mock data not showing badge
+Check: is_mock flag passed to component?
+Check: Badge component rendering?
+
+================================================================================
+END OF RULES
+================================================================================
