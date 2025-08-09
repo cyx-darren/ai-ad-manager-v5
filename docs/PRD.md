@@ -18,7 +18,7 @@ Build a web-based analytics dashboard that displays Google Analytics 4 (GA4) met
 
 2.2 Architecture Approach
 - Frontend: React/Next.js application (Port 3000)
-- Backend: Express REST API (Port 5000)
+- Backend: Express REST API (Port 5050)
 - Database: Supabase Cloud (no local ports)
 - MCP Server: Standalone (stdio, no port required)
 - GA4 Integration: Shared core module between MCP and API
@@ -30,7 +30,7 @@ Build a web-based analytics dashboard that displays Google Analytics 4 (GA4) met
 
 Web Dashboard (localhost:3000)
          ↓ HTTP
-Express REST API (localhost:5000)
+Express REST API (localhost:5050)
     ↓         ↓
 GA4 Core   Supabase Cloud
 Module      Database
@@ -77,16 +77,16 @@ google-analytics-mcp/
 METRIC CARDS
 Display the following metrics as cards with real-time data:
 
-| Metric            | Data Source | Calculation                      |
-|-------------------|-------------|----------------------------------|
-| Total Campaigns   | GA4         | Count unique campaign dimensions |
-| Total Impressions | GA4         | Sum of impression metrics        |
-| Click Rate        | GA4         | (Clicks / Impressions) × 100     |
-| Total Sessions    | GA4         | Sum of sessions metric           |
-| Total Users       | GA4         | Sum of totalUsers metric         |
-| Avg Bounce Rate   | GA4         | Weighted average by sessions     |
-| Conversions       | GA4         | Sum of conversion events         |
-| Total Spend       | Supabase    | Sum of manual spend entries      |
+| Metric            | Data Source | Calculation                                              |
+|-------------------|-------------|----------------------------------------------------------|
+| Total Campaigns   | GA4         | Count unique campaign dimensions                         |
+| Total Impressions | GA4         | Sum of impression metrics                                |
+| Click Rate        | GA4         | (Clicks / Impressions) × 100                             |
+| Total Sessions    | GA4         | Sum of sessions from Paid Search, Display, Paid Video    |
+| Total Users       | GA4         | Sum of totalUsers from Paid Search, Display, Paid Video  |
+| Avg Bounce Rate   | GA4         | Weighted average by sessions                             |
+| Conversions       | GA4         | Sum of conversion events                                 |
+| Total Spend       | Supabase    | Sum of manual spend entries                              |
 
 DATE RANGE FUNCTIONALITY
 - Global date range picker component
@@ -229,11 +229,11 @@ GOOGLE_APPLICATION_CREDENTIALS=./credentials.json
 SUPABASE_URL=https://xxxxx.supabase.co
 SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_KEY=your_service_key
-API_PORT=5000
+API_PORT=5050
 NODE_ENV=development
 
 # .env.local (Frontend)
-NEXT_PUBLIC_API_URL=http://localhost:5000
+NEXT_PUBLIC_API_URL=http://localhost:5050
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 
@@ -266,7 +266,7 @@ npm install @supabase/supabase-js
 npm run dev
 
 # Individual services
-npm run dev:api      # Backend only (port 5000)
+npm run dev:api      # Backend only (port 5050)
 npm run dev:frontend # Frontend only (port 3000)
 npm run start:mcp    # MCP server (for AI agents)
 

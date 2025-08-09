@@ -49,7 +49,7 @@ export class GoogleAnalyticsCore {
    * @param {Object} params Query parameters
    * @returns {Object} Raw GA4 API response
    */
-  async queryAnalytics({ dimensions, metrics, startDate, endDate, limit = 100 }) {
+  async queryAnalytics({ dimensions, metrics, startDate, endDate, limit = 100, dimensionFilter = null }) {
     await this.ensureInitialized();
     
     try {
@@ -65,6 +65,11 @@ export class GoogleAnalyticsCore {
         metrics: metrics.map(name => ({ name })),
         limit: limit,
       };
+
+      // Add dimension filter if provided
+      if (dimensionFilter) {
+        request.dimensionFilter = dimensionFilter;
+      }
 
       const [response] = await this.analyticsDataClient.runReport(request);
       

@@ -1,113 +1,35 @@
 import express from 'express';
+import { verifySupabaseToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Middleware to ensure analytics core is available
-const ensureAnalyticsCore = (req, res, next) => {
-  if (!req.analyticsCore) {
-    return res.status(500).json({
-      error: 'Analytics core not available',
-      message: 'Server configuration error'
-    });
-  }
-  next();
-};
-
-// Apply middleware to all routes
-router.use(ensureAnalyticsCore);
-
-// Helper function to validate date parameters
-const validateDateRange = (startDate, endDate) => {
-  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  
-  if (!startDate || !endDate) {
-    return 'Start date and end date are required (format: YYYY-MM-DD)';
-  }
-  
-  if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
-    return 'Invalid date format. Use YYYY-MM-DD';
-  }
-  
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return 'Invalid dates provided';
-  }
-  
-  if (start > end) {
-    return 'Start date must be before end date';
-  }
-  
-  // Limit to 1 year range
-  const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-  if (end.getTime() - start.getTime() > oneYearMs) {
-    return 'Date range cannot exceed 1 year';
-  }
-  
-  return null;
-};
-
-// Helper function for error handling
-const handleAnalyticsError = (error, res) => {
-  console.error('Analytics API Error:', error);
-  
-  if (error.message.includes('quota')) {
-    return res.status(429).json({
-      error: 'API quota exceeded',
-      message: 'Please try again later'
-    });
-  }
-  
-  if (error.message.includes('permission')) {
-    return res.status(403).json({
-      error: 'Permission denied',
-      message: 'Insufficient permissions to access this data'
-    });
-  }
-  
-  if (error.message.includes('not found')) {
-    return res.status(404).json({
-      error: 'Resource not found',
-      message: 'The requested analytics data was not found'
-    });
-  }
-  
-  return res.status(500).json({
-    error: 'Analytics query failed',
-    message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-  });
-};
-
-// GET /api/analytics - List available endpoints
-router.get('/', (req, res) => {
+// Mock impressions endpoint (10K-50K random)
+router.get('/mock/impressions', verifySupabaseToken, (req, res) => {
+  const impressions = Math.floor(Math.random() * 40000) + 10000;
   res.json({
-    message: 'Google Analytics API endpoints',
-    version: '1.0.0',
-    endpoints: {
-      'GET /query': 'Custom analytics query',
-      'GET /realtime': 'Real-time data',
-      'GET /traffic-sources': 'Traffic source analysis',
-      'GET /demographics': 'User demographics',
-      'GET /pages': 'Page performance',
-      'GET /conversions': 'Conversion data',
-      'GET /campaigns': 'Campaign performance',
-      'GET /devices': 'Device breakdown',
-      'GET /geographic': 'Geographic distribution',
-      'GET /metrics': 'Available metrics and dimensions'
-    },
-    parameters: {
-      common: {
-        startDate: 'Start date (YYYY-MM-DD)',
-        endDate: 'End date (YYYY-MM-DD)',
-        limit: 'Number of rows (default: 100, max: 1000)'
-      }
-    }
+    data: impressions,
+    is_mock: true,
+    note: 'Will be replaced with real data post-MVP',
+    timestamp: new Date().toISOString(),
+    user: req.user.email
   });
 });
 
-// GET /api/analytics/query - Custom analytics query
-router.get('/query', async (req, res) => {
+// Mock click rate endpoint (2-5% random)
+router.get('/mock/clickrate', verifySupabaseToken, (req, res) => {
+  const clickRate = (Math.random() * 3 + 2).toFixed(2);
+  res.json({
+    data: parseFloat(clickRate),
+    unit: 'percentage',
+    is_mock: true,
+    note: 'Will be replaced with real data post-MVP',
+    timestamp: new Date().toISOString(),
+    user: req.user.email
+  });
+});
+
+// Real GA4 data query endpoint
+router.get('/query', verifySupabaseToken, async (req, res) => {
   try {
     const { dimensions, metrics, startDate, endDate, limit = 100 } = req.query;
     
@@ -121,11 +43,10 @@ router.get('/query', async (req, res) => {
     }
     
     // Validate date range
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
+    if (!startDate || !endDate) {
       return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
+        error: 'Missing date range',
+        message: 'startDate and endDate are required (format: YYYY-MM-DD)'
       });
     }
     
@@ -133,15 +54,18 @@ router.get('/query', async (req, res) => {
     const dimensionArray = Array.isArray(dimensions) ? dimensions : [dimensions];
     const metricArray = Array.isArray(metrics) ? metrics : [metrics];
     
-    // Validate limit
-    const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 1000);
+    // Import analytics core dynamically to avoid startup issues
+    const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
+    const analyticsCore = new GoogleAnalyticsCore();
     
-    const data = await req.analyticsCore.queryAnalytics({
+    // Initialize and query GA4 data
+    await analyticsCore.initialize();
+    const data = await analyticsCore.queryAnalytics({
       dimensions: dimensionArray,
       metrics: metricArray,
       startDate,
       endDate,
-      limit: limitNum
+      limit: Math.min(Math.max(parseInt(limit) || 100, 1), 1000)
     });
     
     res.json({
@@ -151,307 +75,114 @@ router.get('/query', async (req, res) => {
         dimensions: dimensionArray,
         metrics: metricArray,
         dateRange: { startDate, endDate },
-        limit: limitNum,
-        timestamp: new Date().toISOString()
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/realtime - Real-time analytics data
-router.get('/realtime', async (req, res) => {
-  try {
-    const { metrics = ['activeUsers'], dimensions = [] } = req.query;
-    
-    const metricArray = Array.isArray(metrics) ? metrics : [metrics];
-    const dimensionArray = Array.isArray(dimensions) ? dimensions : (dimensions ? [dimensions] : []);
-    
-    const data = await req.analyticsCore.getRealtimeData({
-      metrics: metricArray,
-      dimensions: dimensionArray
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        metrics: metricArray,
-        dimensions: dimensionArray,
+        limit: parseInt(limit) || 100,
         timestamp: new Date().toISOString(),
-        type: 'realtime'
+        user: req.user.email
       }
     });
     
   } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/traffic-sources - Traffic source analysis
-router.get('/traffic-sources', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
+    console.error('Analytics query error:', error);
     
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
+    // Handle specific GA4 errors
+    if (error.message.includes('quota')) {
+      return res.status(429).json({
+        error: 'API quota exceeded',
+        message: 'Please try again later'
       });
     }
     
-    const data = await req.analyticsCore.getTrafficSources({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'traffic_sources'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/demographics - User demographics
-router.get('/demographics', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
-    
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
+    if (error.message.includes('permission')) {
+      return res.status(403).json({
+        error: 'Permission denied',
+        message: 'Insufficient permissions to access GA4 data'
       });
     }
     
-    const data = await req.analyticsCore.getUserDemographics({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
+    res.status(500).json({
+      error: 'Analytics query failed',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'demographics'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
   }
 });
 
-// GET /api/analytics/pages - Page performance metrics
-router.get('/pages', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
-    
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
-      });
+// Additional mock endpoints for comprehensive testing
+router.get('/mock/sessions', verifySupabaseToken, (req, res) => {
+  const sessions = Math.floor(Math.random() * 5000) + 1000;
+  res.json({
+    data: sessions,
+    is_mock: true,
+    note: 'Mock sessions data - will be replaced with real GA4 data',
+    timestamp: new Date().toISOString()
+  });
+});
+
+router.get('/mock/users', verifySupabaseToken, (req, res) => {
+  const users = Math.floor(Math.random() * 3000) + 500;
+  res.json({
+    data: users,
+    is_mock: true,
+    note: 'Mock users data - will be replaced with real GA4 data',
+    timestamp: new Date().toISOString()
+  });
+});
+
+router.get('/mock/bounce-rate', verifySupabaseToken, (req, res) => {
+  const bounceRate = (Math.random() * 30 + 30).toFixed(2); // 30-60%
+  res.json({
+    data: parseFloat(bounceRate),
+    unit: 'percentage',
+    is_mock: true,
+    note: 'Mock bounce rate data - will be replaced with real GA4 data',
+    timestamp: new Date().toISOString()
+  });
+});
+
+router.get('/mock/conversions', verifySupabaseToken, (req, res) => {
+  const conversions = Math.floor(Math.random() * 200) + 50;
+  res.json({
+    data: conversions,
+    is_mock: true,
+    note: 'Mock conversions data - will be replaced with real GA4 data',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// List all available analytics endpoints
+router.get('/', (req, res) => {
+  res.json({
+    message: 'Analytics API endpoints',
+    version: '1.0.0',
+    endpoints: {
+      'GET /query': 'Real GA4 data query (requires auth)',
+      'GET /mock/impressions': 'Mock impressions data (requires auth)',
+      'GET /mock/clickrate': 'Mock click rate data (requires auth)',
+      'GET /mock/sessions': 'Mock sessions data (requires auth)',
+      'GET /mock/users': 'Mock users data (requires auth)',
+      'GET /mock/bounce-rate': 'Mock bounce rate data (requires auth)',
+      'GET /mock/conversions': 'Mock conversions data (requires auth)'
+    },
+    parameters: {
+      query: {
+        dimensions: 'GA4 dimensions (e.g., date, country)',
+        metrics: 'GA4 metrics (e.g., sessions, totalUsers)',
+        startDate: 'Start date (YYYY-MM-DD)',
+        endDate: 'End date (YYYY-MM-DD)',
+        limit: 'Number of rows (default: 100, max: 1000)'
+      }
+    },
+    mockData: {
+      note: 'Mock endpoints return random data for MVP development',
+      ranges: {
+        impressions: '10,000 - 50,000',
+        clickrate: '2% - 5%',
+        sessions: '1,000 - 6,000',
+        users: '500 - 3,500',
+        bounceRate: '30% - 60%',
+        conversions: '50 - 250'
+      }
     }
-    
-    const data = await req.analyticsCore.getPagePerformance({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'page_performance'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/conversions - Conversion data
-router.get('/conversions', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
-    
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
-      });
-    }
-    
-    const data = await req.analyticsCore.getConversionData({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'conversions'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/campaigns - Campaign performance
-router.get('/campaigns', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
-    
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
-      });
-    }
-    
-    const data = await req.analyticsCore.getCampaignPerformance({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'campaigns'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/devices - Device breakdown
-router.get('/devices', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
-    
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
-      });
-    }
-    
-    const data = await req.analyticsCore.getDeviceBreakdown({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'devices'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/geographic - Geographic distribution
-router.get('/geographic', async (req, res) => {
-  try {
-    const { startDate, endDate, limit = 100 } = req.query;
-    
-    const dateError = validateDateRange(startDate, endDate);
-    if (dateError) {
-      return res.status(400).json({
-        error: 'Invalid date range',
-        message: dateError
-      });
-    }
-    
-    const data = await req.analyticsCore.getGeographicData({
-      startDate,
-      endDate,
-      limit: Math.min(parseInt(limit) || 100, 1000)
-    });
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        dateRange: { startDate, endDate },
-        limit: parseInt(limit) || 100,
-        timestamp: new Date().toISOString(),
-        type: 'geographic'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
-});
-
-// GET /api/analytics/metadata - Available dimensions and metrics
-router.get('/metadata', async (req, res) => {
-  try {
-    const data = await req.analyticsCore.getMetadata();
-    
-    res.json({
-      success: true,
-      data,
-      metadata: {
-        timestamp: new Date().toISOString(),
-        type: 'metadata'
-      }
-    });
-    
-  } catch (error) {
-    handleAnalyticsError(error, res);
-  }
+  });
 });
 
 export default router;

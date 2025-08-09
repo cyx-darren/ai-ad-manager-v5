@@ -79,6 +79,7 @@ CRITICAL RULES
 
 ## 3. Single GA4 Property (MVP)
 - ALL users see the SAME GA4 data
+- Sessions and Users metrics filtered to PAID CHANNELS ONLY (Paid Search, Display, Paid Video)
 - Only spend data is user-specific
 - Document this limitation clearly
 - Multi-tenant is FUTURE scope
@@ -339,6 +340,36 @@ app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'),
 )
 ----
 
+## GA4 Paid Channel Filtering Pattern
+----
+// Backend - Dashboard API with Channel Filtering
+const ga4Data = await analyticsCore.queryAnalytics({
+  dimensions: ['date', 'defaultChannelGroup'],
+  metrics: ['sessions', 'totalUsers', 'bounceRate'],
+  startDate,
+  endDate,
+  dimensionFilter: {
+    filter: {
+      fieldName: 'defaultChannelGroup',
+      inListFilter: {
+        values: ['Paid Search', 'Display', 'Paid Video']
+      }
+    }
+  }
+});
+
+// Helper functions sum only filtered data
+const totalSessions = sumSessions(ga4Data); // Only paid channels
+const totalUsers = sumUsers(ga4Data);       // Only paid channels
+
+// Frontend - Clear labeling for paid channel data
+<MetricCard
+  title="Total Sessions"
+  value={metrics.totalSessions}
+  description="Paid channel visits (Paid Search, Display, Paid Video)"
+/>
+----
+
 ================================================================================
 ENVIRONMENT VARIABLES
 ================================================================================
@@ -439,12 +470,17 @@ MVP LIMITATIONS (DOCUMENT THESE)
    - Cannot connect different GA4 accounts
    - Multi-tenant is future scope
 
-2. Mock Data
+2. Paid Channel Focus
+   - Sessions and Users metrics show ONLY paid channels (Paid Search, Display, Paid Video)
+   - Other metrics (bounce rate, conversions) show all traffic
+   - Clear labeling indicates paid channel filtering
+
+3. Mock Data
    - Impressions are random 10K-50K
    - Click rate is random 2-5%
    - Will be replaced post-MVP
 
-3. Basic Features
+4. Basic Features
    - No team management
    - No advanced permissions
    - No data export (yet)
@@ -550,6 +586,7 @@ CRITICAL RULES
 
 ## 3. Single GA4 Property (MVP)
 - ALL users see the SAME GA4 data
+- Sessions and Users metrics filtered to PAID CHANNELS ONLY (Paid Search, Display, Paid Video)
 - Only spend data is user-specific
 - Document this limitation clearly
 - Multi-tenant is FUTURE scope
@@ -810,6 +847,36 @@ app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'),
 )
 ----
 
+## GA4 Paid Channel Filtering Pattern
+----
+// Backend - Dashboard API with Channel Filtering
+const ga4Data = await analyticsCore.queryAnalytics({
+  dimensions: ['date', 'defaultChannelGroup'],
+  metrics: ['sessions', 'totalUsers', 'bounceRate'],
+  startDate,
+  endDate,
+  dimensionFilter: {
+    filter: {
+      fieldName: 'defaultChannelGroup',
+      inListFilter: {
+        values: ['Paid Search', 'Display', 'Paid Video']
+      }
+    }
+  }
+});
+
+// Helper functions sum only filtered data
+const totalSessions = sumSessions(ga4Data); // Only paid channels
+const totalUsers = sumUsers(ga4Data);       // Only paid channels
+
+// Frontend - Clear labeling for paid channel data
+<MetricCard
+  title="Total Sessions"
+  value={metrics.totalSessions}
+  description="Paid channel visits (Paid Search, Display, Paid Video)"
+/>
+----
+
 ================================================================================
 ENVIRONMENT VARIABLES
 ================================================================================
@@ -910,12 +977,17 @@ MVP LIMITATIONS (DOCUMENT THESE)
    - Cannot connect different GA4 accounts
    - Multi-tenant is future scope
 
-2. Mock Data
+2. Paid Channel Focus
+   - Sessions and Users metrics show ONLY paid channels (Paid Search, Display, Paid Video)
+   - Other metrics (bounce rate, conversions) show all traffic
+   - Clear labeling indicates paid channel filtering
+
+3. Mock Data
    - Impressions are random 10K-50K
    - Click rate is random 2-5%
    - Will be replaced post-MVP
 
-3. Basic Features
+4. Basic Features
    - No team management
    - No advanced permissions
    - No data export (yet)
