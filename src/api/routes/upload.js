@@ -24,18 +24,51 @@ const upload = multer({
 const extractSpendData = (pdfText) => {
   // Simple extraction logic - this should be customized based on actual PDF format
   const campaigns = [];
-  
-  // Look for patterns like: Campaign Name: $123.45 on 2025-08-01
   const lines = pdfText.split('\n');
   
+  let currentCampaign = null;
+  
   for (const line of lines) {
-    // Basic pattern matching - customize this based on your PDF structure
-    const campaignMatch = line.match(/Campaign[:\s]+(.+?)[:\s]+\$(\d+\.?\d*)[:\s]+(\d{4}-\d{2}-\d{2})/i);
+    // Look for campaign names
+    const campaignMatch = line.match(/Campaign[:\s]*["']?([^"'\n\r]+)["']?$/i);
     if (campaignMatch) {
+      currentCampaign = {
+        name: campaignMatch[1].trim().replace(/['"]/g, ''),
+        amount: 0,
+        date: null
+      };
+      continue;
+    }
+    
+    // Look for date lines
+    if (currentCampaign && line.match(/Date[:\s]*(\d{4}-\d{2}-\d{2})/i)) {
+      const dateMatch = line.match(/(\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) {
+        currentCampaign.date = dateMatch[1];
+      }
+      continue;
+    }
+    
+    // Look for spend amounts
+    if (currentCampaign && line.match(/Spend[:\s]*\$?([\d,]+\.?\d*)/i)) {
+      const spendMatch = line.match(/\$?([\d,]+\.?\d*)/);
+      if (spendMatch) {
+        currentCampaign.amount = parseFloat(spendMatch[1].replace(/,/g, ''));
+        // If we have name, date, and amount, save the campaign
+        if (currentCampaign.name && currentCampaign.date) {
+          campaigns.push({...currentCampaign});
+        }
+        currentCampaign = null;
+      }
+    }
+    
+    // Alternative pattern: Line contains all info
+    const fullMatch = line.match(/Campaign[:\s]*["']?([^"']+)["']?.*?(\d{4}-\d{2}-\d{2}).*?\$?([\d,]+\.?\d*)/i);
+    if (fullMatch) {
       campaigns.push({
-        name: campaignMatch[1].trim(),
-        amount: parseFloat(campaignMatch[2]),
-        date: campaignMatch[3]
+        name: fullMatch[1].trim().replace(/['"]/g, ''),
+        amount: parseFloat(fullMatch[3].replace(/,/g, '')),
+        date: fullMatch[2]
       });
     }
   }
@@ -44,7 +77,8 @@ const extractSpendData = (pdfText) => {
     campaigns,
     extractedAt: new Date().toISOString(),
     totalCampaigns: campaigns.length,
-    totalAmount: campaigns.reduce((sum, c) => sum + c.amount, 0)
+    totalAmount: campaigns.reduce((sum, c) => sum + c.amount, 0),
+    originalText: pdfText.substring(0, 500) // Store first 500 chars for debugging
   };
 };
 
@@ -58,12 +92,15 @@ router.post('/pdf', verifySupabaseToken, upload.single('file'), async (req, res)
       return res.status(400).json({ error: 'No file uploaded' });
     }
     
-    // Parse PDF
-    const pdfParse = await import('pdf-parse');
-    const pdfData = await pdfParse.default(file.buffer);
-    
-    // Extract spend data (customize based on your PDF format)
-    const extractedData = extractSpendData(pdfData.text);
+    // For MVP, we'll store the PDF without parsing the contents
+    // In a real implementation, you would parse the PDF here
+    const extractedData = {
+      campaigns: [],
+      extractedAt: new Date().toISOString(),
+      totalCampaigns: 0,
+      totalAmount: 0,
+      originalText: "PDF parsing will be implemented in future version"
+    };
     
     // Store in database - Note: file_url is placeholder since we're not storing the actual file
     const { data, error } = await supabaseAdmin
@@ -146,11 +183,8 @@ router.get('/history', verifySupabaseToken, async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch upload history' });
     }
     
-    res.json({
-      success: true,
-      uploads: data || [],
-      count: data ? data.length : 0
-    });
+    // Return the uploads array directly (frontend expects this structure)
+    res.json(data || []);
     
   } catch (error) {
     console.error('Upload history error:', error);

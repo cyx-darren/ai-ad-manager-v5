@@ -19,11 +19,11 @@ KEY SIMPLIFICATIONS:
 ================================================================================
 CURRENT STATUS
 ================================================================================
-WORKING ON: Task 2.4 - PDF Upload Component
+WORKING ON: Task 0.2 - Create Database Tables with RLS
 SESSION STARTED: [timestamp]
 BLOCKERS: None
-LAST TEST RUN: Task 2.3 protected dashboard verified with Playwright MCP - route protection working, metrics cards ready
-NEXT ACTION: Create PDF upload component with drag & drop functionality
+LAST TEST RUN: [command and result]
+NEXT ACTION: Create database tables and RLS policies
 
 ================================================================================
 PHASE 0: SUPABASE SETUP & CONFIGURATION
@@ -76,7 +76,7 @@ EXPECT: Email provider shows "Enabled"
 --------------------------------------------------------------------------------
 TASK 0.2: CREATE DATABASE TABLES WITH RLS
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 
 RUN IN SUPABASE SQL EDITOR:
 ----
@@ -159,7 +159,7 @@ EXPECT: User created successfully
 --------------------------------------------------------------------------------
 TASK 0.3: PACKAGE.JSON SCRIPTS SETUP
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 FILE: package.json
 
 ADD THESE SCRIPTS:
@@ -199,7 +199,7 @@ PHASE 1: BACKEND API WITH SUPABASE AUTH
 --------------------------------------------------------------------------------
 TASK 1.1: EXPRESS API WITH SUPABASE VERIFICATION
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 FILES:
 - src/api/server.js
 - src/api/middleware/auth.js
@@ -262,21 +262,21 @@ CHECKS AFTER COMPLETION:
 ----
 Check 1: Server starts
 Command: npm run start:api
-EXPECT: "API Server running on port 5050"
+EXPECT: "API Server running on port 5000"
 
 Check 2: Health endpoint (public)
-Command: curl http://localhost:5050/api/health
+Command: curl http://localhost:5000/api/health
 EXPECT: {"status":"healthy"}
 
 Check 3: Protected endpoint requires auth
-Command: curl http://localhost:5050/api/dashboard/metrics
+Command: curl http://localhost:5000/api/dashboard/metrics
 EXPECT: {"error":"No token provided"}
 ----
 
 --------------------------------------------------------------------------------
 TASK 1.2: PDF UPLOAD ENDPOINTS
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 FILE: src/api/routes/upload.js
 
 ENDPOINTS TO CREATE:
@@ -349,29 +349,25 @@ app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'), async (r
 CHECKS AFTER COMPLETION:
 ----
 Check 1: Upload endpoint exists
-Command: curl -X POST http://localhost:5050/api/upload/pdf
+Command: curl -X POST http://localhost:5000/api/upload/pdf
 EXPECT: {"error":"No token provided"}
 
 Check 2: Upload history endpoint
 Create a test token first, then:
-Command: curl http://localhost:5050/api/upload/history -H "Authorization: Bearer [token]"
+Command: curl http://localhost:5000/api/upload/history -H "Authorization: Bearer [token]"
 EXPECT: [] (empty array if no uploads)
 ----
 
 --------------------------------------------------------------------------------
 TASK 1.3: ANALYTICS ENDPOINTS WITH MOCK DATA
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 FILE: src/api/routes/analytics.js
 
 ENDPOINTS:
-[x] GET /api/analytics/query - Real GA4 data
-[x] GET /api/analytics/mock/impressions - Mock data
-[x] GET /api/analytics/mock/clickrate - Mock data
-[x] GET /api/analytics/mock/sessions - Mock data
-[x] GET /api/analytics/mock/users - Mock data
-[x] GET /api/analytics/mock/bounce-rate - Mock data
-[x] GET /api/analytics/mock/conversions - Mock data
+[ ] GET /api/analytics/query - Real GA4 data
+[ ] GET /api/analytics/mock/impressions - Mock data
+[ ] GET /api/analytics/mock/clickrate - Mock data
 
 MOCK DATA IMPLEMENTATION:
 ----
@@ -400,28 +396,18 @@ app.get('/api/analytics/mock/clickrate', verifySupabaseToken, (req, res) => {
 CHECKS AFTER COMPLETION:
 ----
 Check 1: Mock impressions (need auth)
-Command: curl http://localhost:5050/api/analytics/mock/impressions -H "Authorization: Bearer [token]"
+Command: curl http://localhost:5000/api/analytics/mock/impressions -H "Authorization: Bearer [token]"
 EXPECT: {"data": 25000, "is_mock": true}
 
 Check 2: Mock click rate
-Command: curl http://localhost:5050/api/analytics/mock/clickrate -H "Authorization: Bearer [token]"
+Command: curl http://localhost:5000/api/analytics/mock/clickrate -H "Authorization: Bearer [token]"
 EXPECT: {"data": 3.5, "unit": "percentage", "is_mock": true}
-
-Check 3: All endpoints require authentication
-Command: curl http://localhost:5050/api/analytics/mock/impressions
-EXPECT: {"error": "No token provided"}
-
-Check 4: Test endpoints bypass auth
-Command: curl http://localhost:5050/api/test/mock/impressions
-EXPECT: {"data": [10000-50000], "is_mock": true}
-
-✅ VERIFIED: All checks passed - impressions range 10K-50K, click rate 2-5%, auth required
 ----
 
 --------------------------------------------------------------------------------
 TASK 1.4: DASHBOARD AGGREGATION ENDPOINT
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 FILE: src/api/routes/dashboard.js
 
 ENDPOINT IMPLEMENTATION:
@@ -430,20 +416,12 @@ app.get('/api/dashboard/metrics', verifySupabaseToken, async (req, res) => {
   const { startDate, endDate } = req.query;
   const userId = req.user.id;
   
-  // Get GA4 data filtered by paid channels (Paid Search, Display, Paid Video)
+  // Get GA4 data (same for all users in MVP)
   const ga4Data = await analyticsCore.queryAnalytics({
-    dimensions: ['date', 'defaultChannelGroup'],
+    dimensions: ['date'],
     metrics: ['sessions', 'totalUsers', 'bounceRate'],
     startDate,
-    endDate,
-    dimensionFilter: {
-      filter: {
-        fieldName: 'defaultChannelGroup',
-        inListFilter: {
-          values: ['Paid Search', 'Display', 'Paid Video']
-        }
-      }
-    }
+    endDate
   });
   
   // Get user's spend from database
@@ -465,8 +443,8 @@ app.get('/api/dashboard/metrics', verifySupabaseToken, async (req, res) => {
     totalCampaigns: extractCampaignCount(ga4Data),
     totalImpressions: impressions,  // Mock
     clickRate: parseFloat(clickRate),  // Mock
-    totalSessions: sumSessions(ga4Data), // From paid channels only
-    totalUsers: sumUsers(ga4Data), // From paid channels only
+    totalSessions: sumSessions(ga4Data),
+    totalUsers: sumUsers(ga4Data),
     avgBounceRate: calculateBounceRate(ga4Data),
     conversions: extractConversions(ga4Data),
     totalSpend: totalSpend,  // User-specific
@@ -477,23 +455,9 @@ app.get('/api/dashboard/metrics', verifySupabaseToken, async (req, res) => {
 
 CHECKS AFTER COMPLETION:
 ----
-Check 1: Dashboard metrics (requires auth)
-Command: curl "http://localhost:5050/api/dashboard/metrics?startDate=2025-08-01&endDate=2025-08-07" -H "Authorization: Bearer [token]"
+Check 1: Dashboard metrics
+Command: curl "http://localhost:5000/api/dashboard/metrics?startDate=2025-08-01&endDate=2025-08-07" -H "Authorization: Bearer [token]"
 EXPECT: All 8 metrics with mockDataFields array
-
-Check 2: Auth protection works
-Command: curl "http://localhost:5050/api/dashboard/metrics?startDate=2025-08-01&endDate=2025-08-07"
-EXPECT: {"error": "No token provided"}
-
-Check 3: Dashboard summary endpoint
-Command: curl http://localhost:5050/api/dashboard/summary -H "Authorization: Bearer [token]"
-EXPECT: {"totalUploads": 0, "totalSpend": 0, "summary": {...}}
-
-Check 4: Endpoint info available
-Command: curl http://localhost:5050/api/dashboard/
-EXPECT: Endpoint documentation and data types
-
-✅ VERIFIED: All checks passed - auth protection working, endpoints integrated, mock data clearly marked
 ----
 
 ================================================================================
@@ -503,7 +467,7 @@ PHASE 2: FRONTEND WITH SUPABASE AUTH
 --------------------------------------------------------------------------------
 TASK 2.1: NEXT.JS SETUP WITH SUPABASE
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 DIRECTORY: web/
 
 COMMANDS TO RUN:
@@ -581,19 +545,12 @@ Check 2: Supabase client works
 Open browser console at localhost:3000
 Run: window.supabase = (await import('@/lib/supabase')).supabase
 EXPECT: supabase object available
-
-✅ VERIFIED: Frontend accessible on localhost:3000, Supabase client configured correctly
-- Next.js 15.4.6 with TypeScript and Tailwind CSS
-- Modern @supabase/ssr package for SSR support  
-- AuthProvider with React Context for state management
-- Environment variables configured correctly
-- All required packages installed and working
 ----
 
 --------------------------------------------------------------------------------
 TASK 2.2: LOGIN AND SIGNUP PAGES
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 
 CREATE LOGIN PAGE:
 ----
@@ -689,22 +646,12 @@ EXPECT: Signup form
 Check 3: Test signup
 Fill form and submit
 EXPECT: User created in Supabase, redirects to dashboard
-
-✅ VERIFIED WITH PLAYWRIGHT MCP: All checks passed
-- Login page renders with professional Tailwind CSS styling
-- Signup page renders with email, password, and confirm password fields
-- Error handling works correctly (shows "Invalid login credentials")
-- Navigation between login/signup pages works perfectly
-- "Back to home" links function correctly
-- Forms validate properly (password confirmation, minimum length)
-- Supabase authentication integration working
-- All pages are mobile-responsive and accessible
 ----
 
 --------------------------------------------------------------------------------
 TASK 2.3: PROTECTED DASHBOARD
 --------------------------------------------------------------------------------
-STATUS: [x] COMPLETED
+STATUS: [ ] Not Started
 
 CREATE PROTECTED ROUTE:
 ----
@@ -783,17 +730,6 @@ EXPECT: Dashboard with metric cards
 
 Check 3: Mock data indicators
 EXPECT: Impressions and Click Rate show "Mock Data" badge
-
-✅ VERIFIED WITH PLAYWRIGHT MCP: All checks passed
-- Protected route correctly redirects unauthenticated users to /auth/login
-- Dashboard component created with professional metric cards layout
-- MetricCard component supports mock data indicators
-- Dashboard integrates with backend API for metrics fetching
-- Error handling and loading states implemented
-- Clean header with user email display and sign out functionality
-- Responsive grid layout for metric cards
-- Mock data badges clearly identify MVP placeholder data
-- Date range information displayed for transparency
 ----
 
 --------------------------------------------------------------------------------
@@ -874,7 +810,587 @@ EXPECT: Dropzone interface
 Check 2: PDF upload works
 Upload a test PDF
 EXPECT: File uploads, shows in database
+
+Check 3: Upload history displays
+After upload completes
+EXPECT: File appears in history table
 ----
+
+--------------------------------------------------------------------------------
+TASK 2.5: COMPLETE INTEGRATION & DATE RANGE FUNCTIONALITY
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+FEATURES TO IMPLEMENT:
+[ ] Connect date picker to data fetching
+[ ] Loading states for all components
+[ ] Error boundaries
+[ ] Auto-refresh capability
+[ ] Responsive design polish
+
+UPDATE DASHBOARD WITH FUNCTIONAL DATE RANGE:
+----
+// app/dashboard/page.tsx (updated)
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/components/AuthProvider'
+import MetricCard from '@/components/MetricCard'
+import DateRangePicker from '@/components/DateRangePicker'
+import TrafficChart from '@/components/charts/TrafficChart'
+import DeviceChart from '@/components/charts/DeviceChart'
+import GeographicChart from '@/components/charts/GeographicChart'
+import CampaignChart from '@/components/charts/CampaignChart'
+
+export default function Dashboard() {
+  const { user, loading } = useAuth()
+  const router = useRouter()
+  const [metrics, setMetrics] = useState(null)
+  const [charts, setCharts] = useState({
+    traffic: null,
+    devices: null,
+    geographic: null,
+    campaigns: null
+  })
+  const [loadingData, setLoadingData] = useState(false)
+  const [error, setError] = useState(null)
+  const [dateRange, setDateRange] = useState({
+    startDate: new Date(new Date().setDate(new Date().getDate() - 30)),
+    endDate: new Date()
+  })
+  const [lastUpdated, setLastUpdated] = useState(new Date())
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/auth/login')
+    }
+  }, [user, loading, router])
+
+  const fetchAllData = useCallback(async () => {
+    if (!user) return
+    
+    setLoadingData(true)
+    setError(null)
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+      
+      const startStr = dateRange.startDate.toISOString().split('T')[0]
+      const endStr = dateRange.endDate.toISOString().split('T')[0]
+      
+      // Fetch metrics
+      const metricsRes = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`,
+        { headers }
+      )
+      const metricsData = await metricsRes.json()
+      setMetrics(metricsData)
+      
+      // Fetch charts data in parallel
+      const [trafficRes, devicesRes, geoRes, campaignsRes] = await Promise.all([
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/traffic?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/devices?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/geographic?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/campaigns?startDate=${startStr}&endDate=${endStr}`, { headers })
+      ])
+      
+      setCharts({
+        traffic: await trafficRes.json(),
+        devices: await devicesRes.json(),
+        geographic: await geoRes.json(),
+        campaigns: await campaignsRes.json()
+      })
+      
+      setLastUpdated(new Date())
+    } catch (err) {
+      setError('Failed to load dashboard data')
+      console.error(err)
+    } finally {
+      setLoadingData(false)
+    }
+  }, [user, dateRange])
+
+  useEffect(() => {
+    fetchAllData()
+  }, [fetchAllData])
+
+  // Auto-refresh every 5 minutes
+  useEffect(() => {
+    const interval = setInterval(fetchAllData, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [fetchAllData])
+
+  if (loading) return <div className="flex items-center justify-center min-h-screen">Loading...</div>
+  if (!user) return null
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto px-4 py-8">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+          <div>
+            <h1 className="text-3xl font-bold">Analytics Dashboard</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <DateRangePicker value={dateRange} onChange={setDateRange} />
+            <button
+              onClick={fetchAllData}
+              disabled={loadingData}
+              className="p-2 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+            >
+              <RefreshIcon className={`h-5 w-5 ${loadingData ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+        
+        {/* Error State */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+            {error}
+            <button onClick={fetchAllData} className="ml-2 underline">Retry</button>
+          </div>
+        )}
+        
+        {/* Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          {loadingData && !metrics ? (
+            // Loading skeletons
+            [...Array(8)].map((_, i) => (
+              <div key={i} className="bg-white rounded-lg shadow p-6 animate-pulse">
+                <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                <div className="h-8 bg-gray-200 rounded w-3/4"></div>
+              </div>
+            ))
+          ) : (
+            <>
+              <MetricCard
+                title="Total Campaigns"
+                value={metrics?.totalCampaigns}
+                icon="chart-bar"
+                color="blue"
+              />
+              <MetricCard
+                title="Total Impressions"
+                value={metrics?.totalImpressions}
+                isMockData={true}
+                icon="eye"
+                color="green"
+              />
+              <MetricCard
+                title="Click Rate"
+                value={`${metrics?.clickRate}%`}
+                isMockData={true}
+                icon="mouse-pointer"
+                color="purple"
+              />
+              <MetricCard
+                title="Total Sessions"
+                value={metrics?.totalSessions}
+                icon="activity"
+                color="yellow"
+              />
+              <MetricCard
+                title="Total Users"
+                value={metrics?.totalUsers}
+                icon="users"
+                color="pink"
+              />
+              <MetricCard
+                title="Avg Bounce Rate"
+                value={`${metrics?.avgBounceRate}%`}
+                icon="trending-down"
+                color="indigo"
+              />
+              <MetricCard
+                title="Conversions"
+                value={metrics?.conversions}
+                icon="target"
+                color="red"
+              />
+              <MetricCard
+                title="Total Spend"
+                value={`$${metrics?.totalSpend?.toFixed(2) || '0.00'}`}
+                icon="dollar-sign"
+                color="gray"
+              />
+            </>
+          )}
+        </div>
+        
+        {/* Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {loadingData && !charts.traffic ? (
+            // Loading skeletons for charts
+            [...Array(4)].map((_, i) => (
+              <div key={i} className="bg-white rounded-lg shadow p-6 animate-pulse">
+                <div className="h-4 bg-gray-200 rounded w-1/3 mb-4"></div>
+                <div className="h-64 bg-gray-200 rounded"></div>
+              </div>
+            ))
+          ) : (
+            <>
+              <TrafficChart data={charts.traffic} />
+              <DeviceChart data={charts.devices} />
+              <GeographicChart data={charts.geographic} />
+              <CampaignChart data={charts.campaigns} />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+----
+
+VISUAL CHANGES:
+- Date picker now fully functional
+- All data updates when date range changes
+- Loading skeletons during data fetch
+- Auto-refresh every 5 minutes
+- Last updated timestamp
+- Error states with retry
+- Responsive layout adjustments
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Date range functionality
+Action: Change from "Last 30 days" to "Last 7 days"
+EXPECT: All metrics and charts reload with new data
+
+Check 2: Loading states
+Action: Change date range
+EXPECT: Skeleton loaders appear, then real data
+
+Check 3: Auto-refresh
+Leave dashboard open for 5 minutes
+EXPECT: Data refreshes automatically
+
+Check 4: Responsive design
+Test on mobile (375px), tablet (768px), desktop (1440px)
+EXPECT: Proper layouts at all sizes
+----
+
+--------------------------------------------------------------------------------
+TASK 2.6: CHART COMPONENTS IMPLEMENTATION
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+CHARTS TO BUILD:
+[ ] Traffic Source Distribution (Donut)
+[ ] Device Breakdown (Donut)
+[ ] Campaign Performance (Donut)
+[ ] Geographic Distribution (Donut)
+
+CREATE TRAFFIC CHART:
+----
+// components/charts/TrafficChart.tsx
+'use client'
+
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
+
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899']
+
+export default function TrafficChart({ data }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4">Traffic Sources</h3>
+        <div className="h-64 flex items-center justify-center text-gray-500">
+          No data available
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h3 className="text-lg font-semibold mb-4">Traffic Sources</h3>
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            innerRadius={60}
+            outerRadius={100}
+            dataKey="value"
+            nameKey="name"
+            label={({ percentage }) => `${percentage}%`}
+          >
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            ))}
+          </Pie>
+          <Tooltip />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+----
+
+CREATE DEVICE CHART:
+----
+// components/charts/DeviceChart.tsx
+'use client'
+
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
+
+const COLORS = {
+  desktop: '#3B82F6',
+  mobile: '#10B981',
+  tablet: '#F59E0B'
+}
+
+export default function DeviceChart({ data }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4">Device Breakdown</h3>
+        <div className="h-64 flex items-center justify-center text-gray-500">
+          No data available
+        </div>
+      </div>
+    )
+  }
+
+  const chartData = data.map(item => ({
+    name: item.name.charAt(0).toUpperCase() + item.name.slice(1),
+    value: item.sessions,
+    users: item.users
+  }))
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h3 className="text-lg font-semibold mb-4">Device Breakdown</h3>
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie
+            data={chartData}
+            cx="50%"
+            cy="50%"
+            innerRadius={60}
+            outerRadius={100}
+            dataKey="value"
+            nameKey="name"
+          >
+            {chartData.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={COLORS[entry.name.toLowerCase()] || '#6B7280'} />
+            ))}
+          </Pie>
+          <Tooltip 
+            content={({ active, payload }) => {
+              if (active && payload && payload[0]) {
+                return (
+                  <div className="bg-white p-2 border rounded shadow">
+                    <p className="font-semibold">{payload[0].name}</p>
+                    <p>Sessions: {payload[0].value}</p>
+                    <p>Users: {payload[0].payload.users}</p>
+                  </div>
+                )
+              }
+              return null
+            }}
+          />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+----
+
+VISUAL CHANGES:
+- 4 donut charts appear below metric cards
+- Each chart in white card with shadow
+- Colorful segments with legends
+- Hover tooltips with detailed data
+- Responsive 2x2 grid on desktop, stack on mobile
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: All charts render
+EXPECT: 4 charts visible below metric cards
+
+Check 2: Charts have data
+EXPECT: Colorful donut segments with legends
+
+Check 3: Tooltips work
+Hover over chart segments
+EXPECT: Detailed tooltips appear
+
+Check 4: Charts update with date range
+Change date range
+EXPECT: Charts refresh with new data
+----
+
+================================================================================
+PHASE 3: TESTING & POLISH
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 3.1: END-TO-END TESTING
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+COMPLETE USER FLOW TEST:
+[ ] Sign up new user
+[ ] Login with credentials
+[ ] Upload PDF bill
+[ ] View parsed spend in dashboard
+[ ] Change date ranges
+[ ] View all charts
+[ ] Test logout
+
+PERFORMANCE TESTING:
+[ ] Dashboard loads < 3 seconds
+[ ] Date range change < 2 seconds
+[ ] PDF processing < 10 seconds
+[ ] Charts render smoothly
+
+SECURITY TESTING:
+[ ] User A cannot see User B's data
+[ ] Invalid tokens rejected
+[ ] File upload validation works
+[ ] RLS policies enforced
+
+RESPONSIVE TESTING:
+[ ] Mobile (375px) - Cards stack, charts stack
+[ ] Tablet (768px) - 2 column layout
+[ ] Desktop (1440px) - Full 4 column layout
+
+DEVELOPMENT TESTING WITH PLAYWRIGHT MCP:
+Tell Claude: "Use Playwright MCP to test the complete user flow from signup to dashboard interaction"
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Complete flow works
+1. Create new user account
+2. Login
+3. Upload PDF
+4. See spend data in dashboard
+5. Change date range
+6. Logout
+EXPECT: All steps complete without errors
+
+Check 2: Data isolation
+Login as different user
+EXPECT: Cannot see previous user's data
+
+Check 3: Performance
+Measure load times
+EXPECT: All within acceptable limits
+----
+
+--------------------------------------------------------------------------------
+TASK 3.2: PRODUCTION OPTIMIZATIONS
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+OPTIMIZATIONS TO IMPLEMENT:
+[ ] Add caching for GA4 data
+[ ] Implement request debouncing
+[ ] Add Tailwind CSS purge
+[ ] Optimize images and assets
+[ ] Add error tracking (Sentry)
+[ ] Implement logging
+
+CACHING IMPLEMENTATION:
+----
+// src/api/middleware/cache.js
+const cache = new Map()
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+export const cacheMiddleware = (req, res, next) => {
+  const key = `${req.path}:${JSON.stringify(req.query)}`
+  const cached = cache.get(key)
+  
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return res.json(cached.data)
+  }
+  
+  const originalJson = res.json
+  res.json = function(data) {
+    cache.set(key, { data, timestamp: Date.now() })
+    originalJson.call(this, data)
+  }
+  
+  next()
+}
+----
+
+TAILWIND PRODUCTION BUILD:
+----
+// tailwind.config.js
+module.exports = {
+  content: [
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  // Ensure unused CSS is removed in production
+}
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Build size
+Command: cd web && npm run build
+EXPECT: CSS bundle < 50KB
+
+Check 2: Cache working
+Make same API call twice
+EXPECT: Second call returns instantly
+
+Check 3: No console errors in production
+Build and run production version
+EXPECT: Clean console, no warnings
+----
+
+================================================================================
+DEPLOYMENT PREPARATION
+================================================================================
+
+--------------------------------------------------------------------------------
+TASK 4.1: ENVIRONMENT CONFIGURATION
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+PRODUCTION ENVIRONMENT VARIABLES:
+
+Backend (.env.production):
+----
+NODE_ENV=production
+GA_PROPERTY_ID=[your-id]
+GOOGLE_APPLICATION_CREDENTIALS=[path-to-json]
+SUPABASE_URL=[your-url]
+SUPABASE_ANON_KEY=[your-key]
+SUPABASE_SERVICE_KEY=[your-service-key]
+API_PORT=5000
+----
+
+Frontend (.env.production.local):
+----
+NEXT_PUBLIC_API_URL=https://your-api-domain.com
+NEXT_PUBLIC_SUPABASE_URL=[your-url]
+NEXT_PUBLIC_SUPABASE_ANON_KEY=[your-key]
+----
+
+DEPLOYMENT CHECKLIST:
+[ ] All environment variables set
+[ ] Database migrations complete
+[ ] RLS policies verified
+[ ] API endpoints use HTTPS
+[ ] CORS configured for production domain
+[ ] Error tracking configured
+[ ] Monitoring setup
 
 ================================================================================
 TESTING CHECKLIST
@@ -932,7 +1448,6 @@ NOTES
 
 MVP SCOPE:
 - Single GA4 property (all users see same data)
-- Paid channel filtering (Sessions/Users from Paid Search, Display, Paid Video only)
 - User-specific spend from PDFs
 - Mock data for impressions/clicks
 - Basic auth with Supabase

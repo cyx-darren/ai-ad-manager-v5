@@ -8,6 +8,8 @@ import { verifySupabaseToken } from './middleware/auth.js';
 
 // Import route modules
 import analyticsRoutes from './routes/analytics.js';
+import uploadRoutes from './routes/upload.js';
+import dashboardRoutes from './routes/dashboard.js';
 
 // Load environment variables
 dotenv.config();
@@ -128,8 +130,10 @@ class APIServer {
       }
     });
 
-    // API routes (temporarily disabled)
-    // this.app.use('/api/analytics', analyticsRoutes);
+    // API routes
+    this.app.use('/api/upload', uploadRoutes);
+    this.app.use('/api/dashboard', dashboardRoutes);
+    // this.app.use('/api/analytics', analyticsRoutes); // temporarily disabled
 
     // Root endpoint
     this.app.get('/', (req, res) => {
@@ -211,7 +215,8 @@ class APIServer {
       this.server = this.app.listen(this.port, () => {
         console.log(`🚀 API Server running on port ${this.port}`);
         console.log(`📊 Health check: http://localhost:${this.port}/api/health`);
-        console.log(`📈 Analytics API: http://localhost:${this.port}/api/analytics`);
+        console.log(`📤 Upload API: http://localhost:${this.port}/api/upload`);
+        console.log(`📈 Dashboard API: http://localhost:${this.port}/api/dashboard`);
         console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       });
 
