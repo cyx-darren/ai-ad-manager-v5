@@ -117,18 +117,7 @@ class APIServer {
       }
     });
 
-    // Protected dashboard metrics endpoint
-    this.app.get('/api/dashboard/metrics', verifySupabaseToken, async (req, res) => {
-      try {
-        res.json({
-          message: 'Dashboard metrics endpoint',
-          user: req.user.email,
-          note: 'This endpoint will be implemented in Task 1.4'
-        });
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch metrics' });
-      }
-    });
+    // Dashboard endpoints are handled by dashboardRoutes
 
     // API routes
     this.app.use('/api/upload', uploadRoutes);
@@ -241,7 +230,8 @@ class APIServer {
 const apiServer = new APIServer();
 
 // Start server if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Check if this module is the main module
+if (import.meta.url.endsWith(process.argv[1]) || process.argv[1].endsWith('server.js')) {
   apiServer.start().catch(console.error);
 }
 

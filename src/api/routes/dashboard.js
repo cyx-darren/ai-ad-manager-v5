@@ -6,17 +6,16 @@ const router = express.Router();
 
 // Helper functions to process GA4 data
 const extractCampaignCount = (ga4Data) => {
-  // For MVP, we'll use a mock campaign count based on sessions
-  // In real implementation, this would come from GA4 campaign data
-  if (!ga4Data || !ga4Data.rows) return 0;
-  
-  // Estimate campaigns based on sessions (rough heuristic for MVP)
-  const totalSessions = sumSessions(ga4Data);
-  return Math.max(1, Math.floor(totalSessions / 100)); // ~1 campaign per 100 sessions
+  // For MVP, we'll use a mock campaign count
+  // In real implementation, this would come from GA4 campaign dimension data
+  // Mock realistic campaign count (3-8 campaigns is typical for small businesses)
+  return Math.floor(Math.random() * 6) + 3; // Random 3-8 campaigns
 };
 
 const sumSessions = (ga4Data) => {
   if (!ga4Data || !ga4Data.rows) return 0;
+  
+  console.log('📊 Processing GA4 sessions data, rows:', ga4Data.rows.length);
   
   return ga4Data.rows.reduce((sum, row) => {
     // Find sessions metric in the row
@@ -25,9 +24,12 @@ const sumSessions = (ga4Data) => {
     );
     
     if (sessionMetricIndex >= 0 && row.metricValues) {
-      // Only sum sessions from our target channels (Paid Search, Display, Paid Video)
-      // The filtering is already done in the GA4 query, so we can sum all returned rows
-      return sum + parseInt(row.metricValues[sessionMetricIndex].value || 0);
+      // Sum all sessions from paid traffic channels
+      // The filtering is already done in the GA4 query for paid channels
+      const sessionValue = parseInt(row.metricValues[sessionMetricIndex].value || 0);
+      const channelGroup = row.dimensionValues?.[1]?.value || 'unknown';
+      console.log(`Adding ${sessionValue} sessions from channel: ${channelGroup}`);
+      return sum + sessionValue;
     }
     return sum;
   }, 0);
@@ -36,6 +38,8 @@ const sumSessions = (ga4Data) => {
 const sumUsers = (ga4Data) => {
   if (!ga4Data || !ga4Data.rows) return 0;
   
+  console.log('👥 Processing GA4 users data, rows:', ga4Data.rows.length);
+  
   return ga4Data.rows.reduce((sum, row) => {
     // Find totalUsers metric in the row
     const userMetricIndex = ga4Data.metricHeaders?.findIndex(
@@ -43,9 +47,12 @@ const sumUsers = (ga4Data) => {
     );
     
     if (userMetricIndex >= 0 && row.metricValues) {
-      // Only sum users from our target channels (Paid Search, Display, Paid Video)
-      // The filtering is already done in the GA4 query, so we can sum all returned rows
-      return sum + parseInt(row.metricValues[userMetricIndex].value || 0);
+      // Sum all users from paid traffic channels
+      // The filtering is already done in the GA4 query for paid channels
+      const userValue = parseInt(row.metricValues[userMetricIndex].value || 0);
+      const channelGroup = row.dimensionValues?.[1]?.value || 'unknown';
+      console.log(`Adding ${userValue} users from channel: ${channelGroup}`);
+      return sum + userValue;
     }
     return sum;
   }, 0);
@@ -106,16 +113,19 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
       const analyticsCore = new GoogleAnalyticsCore();
       
-      // Initialize and query GA4 data with channel filtering
+      // Initialize and query GA4 data with channel group filtering for paid traffic
       await analyticsCore.initialize();
+      
+      // Query by sessionDefaultChannelGroup to get exact paid traffic categories
+      // This properly captures Paid Search, Display, and Paid Video traffic
       ga4Data = await analyticsCore.queryAnalytics({
-        dimensions: ['date', 'defaultChannelGroup'],
+        dimensions: ['date', 'sessionDefaultChannelGroup'],
         metrics: ['sessions', 'totalUsers', 'bounceRate'],
         startDate,
         endDate,
         dimensionFilter: {
           filter: {
-            fieldName: 'defaultChannelGroup',
+            fieldName: 'sessionDefaultChannelGroup',
             inListFilter: {
               values: ['Paid Search', 'Display', 'Paid Video']
             }
@@ -155,6 +165,8 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
     const conversions = ga4Data ? extractConversions(ga4Data) : Math.floor(Math.random() * 50) + 20;
     const totalCampaigns = ga4Data ? extractCampaignCount(ga4Data) : Math.floor(Math.random() * 5) + 1;
     
+    console.log(`📊 Final calculated values: Sessions=${totalSessions}, Users=${totalUsers}, BounceRate=${avgBounceRate}%, Conversions=${conversions}, Campaigns=${totalCampaigns}`);
+    
     const responseData = {
       totalCampaigns,
       totalImpressions: impressions,
@@ -164,7 +176,7 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       avgBounceRate: parseFloat(avgBounceRate),
       conversions,
       totalSpend: totalSpend,
-      mockDataFields: ['totalImpressions', 'clickRate'],
+      mockDataFields: ['totalCampaigns', 'totalImpressions', 'clickRate'],
       metadata: {
         dateRange: { startDate, endDate },
         dataSource: {

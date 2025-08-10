@@ -23,6 +23,9 @@ export default function MetricCard({
   description 
 }: MetricCardProps) {
   const formatValue = (val: number | string) => {
+    if (val === undefined || val === null) {
+      return '—';
+    }
     if (typeof val === 'number') {
       return val.toLocaleString()
     }

@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import MetricCard from '@/components/MetricCard'
+import DateRangePicker from '@/components/DateRangePicker'
 import Link from 'next/link'
+import { RefreshCw } from 'lucide-react'
 
 interface DashboardMetrics {
   totalCampaigns: number
@@ -38,6 +40,11 @@ export default function Dashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dateRange, setDateRange] = useState({
+    startDate: new Date(new Date().setDate(new Date().getDate() - 30)),
+    endDate: new Date()
+  })
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   useEffect(() => {
     if (!loading && !user) {
@@ -45,13 +52,9 @@ export default function Dashboard() {
     }
   }, [user, loading, router])
 
-  useEffect(() => {
-    if (user) {
-      fetchMetrics()
-    }
-  }, [user])
-
-  const fetchMetrics = async () => {
+  const fetchMetrics = useCallback(async () => {
+    if (!user) return
+    
     setMetricsLoading(true)
     setError(null)
     
@@ -64,8 +67,12 @@ export default function Dashboard() {
         throw new Error('No valid session found')
       }
       
+      // Format dates for API
+      const startStr = dateRange.startDate.toISOString().split('T')[0]
+      const endStr = dateRange.endDate.toISOString().split('T')[0]
+      
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=2025-08-01&endDate=2025-08-07`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`,
         {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
@@ -79,13 +86,34 @@ export default function Dashboard() {
       
       const data = await response.json()
       setMetrics(data)
+      setLastUpdated(new Date())
     } catch (error) {
       console.error('Failed to fetch metrics:', error)
       setError(error instanceof Error ? error.message : 'Failed to fetch metrics')
     } finally {
       setMetricsLoading(false)
     }
-  }
+  }, [user, dateRange])
+
+  // Fetch metrics when user or date range changes
+  useEffect(() => {
+    if (user) {
+      fetchMetrics()
+    }
+  }, [user, dateRange])
+
+  // Auto-refresh every 5 minutes
+  useEffect(() => {
+    if (!user) return
+    
+    const interval = setInterval(() => {
+      if (user) {
+        fetchMetrics()
+      }
+    }, 5 * 60 * 1000) // 5 minutes
+    
+    return () => clearInterval(interval)
+  }, [user])
 
   const handleSignOut = async () => {
     try {
@@ -114,12 +142,28 @@ export default function Dashboard() {
       {/* Header */}
       <div className="bg-white shadow-sm">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h1>
-              <p className="text-sm text-gray-600">Welcome back, {user.email}</p>
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span>Welcome back, {user.email}</span>
+                {lastUpdated && (
+                  <span className="text-xs text-gray-500">
+                    • Last updated: {lastUpdated.toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex items-center space-x-4">
+              <DateRangePicker value={dateRange} onChange={setDateRange} />
+              <button
+                onClick={fetchMetrics}
+                disabled={metricsLoading}
+                className="p-2 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow disabled:opacity-50"
+                title="Refresh data"
+              >
+                <RefreshCw className={`h-4 w-4 ${metricsLoading ? 'animate-spin' : ''}`} />
+              </button>
               <Link
                 href="/uploads"
                 className="px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 border border-blue-200 rounded-md hover:bg-blue-50 transition"
@@ -178,18 +222,29 @@ export default function Dashboard() {
         )}
 
         {/* Metrics Grid */}
-        {metrics && !metricsLoading && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {metricsLoading && !metrics ? (
+            // Loading skeletons
+            [...Array(8)].map((_, i) => (
+              <div key={i} className="bg-white rounded-lg shadow p-6 animate-pulse">
+                <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                <div className="h-8 bg-gray-200 rounded w-3/4 mb-2"></div>
+                <div className="h-3 bg-gray-200 rounded w-full"></div>
+              </div>
+            ))
+          ) : metrics && (
+            <>
             <MetricCard
               title="Total Campaigns"
               value={metrics.totalCampaigns}
+              isMockData={metrics.mockDataFields?.includes('totalCampaigns') || false}
               description="Active advertising campaigns"
             />
             
             <MetricCard
               title="Total Impressions"
               value={metrics.totalImpressions}
-              isMockData={metrics.mockDataFields.includes('totalImpressions')}
+              isMockData={metrics.mockDataFields?.includes('totalImpressions') || false}
               description="Ad views and displays"
             />
             
@@ -197,7 +252,7 @@ export default function Dashboard() {
               title="Click Rate"
               value={metrics.clickRate}
               unit="%"
-              isMockData={metrics.mockDataFields.includes('clickRate')}
+              isMockData={metrics.mockDataFields?.includes('clickRate') || false}
               description="Percentage of users who clicked"
             />
             
@@ -232,11 +287,12 @@ export default function Dashboard() {
               unit="USD"
               description="Your advertising spend from PDFs"
             />
-          </div>
-        )}
+            </>
+          )}
+        </div>
 
         {/* Mock Data Notice */}
-        {metrics && metrics.mockDataFields.length > 0 && (
+        {metrics && metrics.mockDataFields && metrics.mockDataFields.length > 0 && (
           <div className="mt-8 p-4 bg-orange-50 border border-orange-200 rounded-lg">
             <h3 className="text-sm font-medium text-orange-800">MVP Notice</h3>
             <p className="text-sm text-orange-600 mt-1">
