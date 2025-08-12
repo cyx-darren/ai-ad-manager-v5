@@ -146,11 +146,12 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
     // Get GA4 data (same for all users in MVP)
     let ga4Data = null;
     let ga4Error = null;
+    let analyticsCore = null;
     
     try {
       // Import analytics core dynamically to avoid startup issues
       const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
-      const analyticsCore = new GoogleAnalyticsCore();
+      analyticsCore = new GoogleAnalyticsCore();
       
       // Initialize and query GA4 data with channel group filtering for paid traffic
       await analyticsCore.initialize();
@@ -207,12 +208,16 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
     
     // Get real campaign count from GA4 or use fallback
     let totalCampaigns = Math.floor(Math.random() * 5) + 1; // Default fallback
-    if (ga4Data) {
+    if (analyticsCore && ga4Data) {
       try {
         totalCampaigns = await extractCampaignCount(analyticsCore, startDate, endDate);
+        console.log(`🎯 Campaign count from GA4: ${totalCampaigns}`);
       } catch (error) {
         console.error('Error getting campaign count:', error);
+        // Keep the fallback value
       }
+    } else {
+      console.log('⚠️ Using fallback campaign count (analyticsCore not available)');
     }
     
     console.log(`📊 Final calculated values: Sessions=${totalSessions}, Users=${totalUsers}, BounceRate=${avgBounceRate}%, Conversions=${conversions}, Campaigns=${totalCampaigns}`);
