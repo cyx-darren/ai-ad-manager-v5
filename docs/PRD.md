@@ -147,13 +147,19 @@ METRIC CARDS
 | Total Campaigns   | GA4         | From single GA4 property       |
 | Total Impressions | Mock Data   | Random 10K-50K with badge       |
 | Click Rate        | Mock Data   | Random 2-5% with badge          |
-| Total Sessions    | GA4         | From single GA4 property       |
-| Total Users       | GA4         | From single GA4 property       |
+| Total Sessions    | GA4         | Paid channels only (Paid Search, Display, Paid Video) |
+| Total Users       | GA4         | Paid channels only (Paid Search, Display, Paid Video) |
 | Avg Bounce Rate   | GA4         | From single GA4 property       |
 | Conversions       | GA4         | From single GA4 property       |
 | Total Spend       | User PDFs   | User-specific from uploads     |
 
-Note: All users see same GA4 data (single property) but different spend data (user-specific)
+**CRITICAL: GA4 Data Calculation Rules**
+- Total Sessions and Total Users MUST be filtered to only include paid channels: Paid Search, Display, and Paid Video
+- Query MUST use `sessionDefaultChannelGroup` dimension WITHOUT date dimension to avoid double-counting users
+- The GA4 query should use: `dimensions: ['sessionDefaultChannelGroup']` NOT `dimensions: ['date', 'sessionDefaultChannelGroup']`
+- This prevents counting the same user multiple times if they visit on different days
+- The sumUsers() and sumSessions() functions must reference dimensionValues[0] for the channel group
+- All users see same GA4 data (single property) but different spend data (user-specific)
 
 5. DATABASE SCHEMA (SUPABASE WITH RLS)
 --------------------------------------
@@ -231,6 +237,11 @@ GET /api/analytics/mock/clickrate - Mock data
 
 6.4 Dashboard Endpoints (Protected)
 GET /api/dashboard/metrics - Combined metrics
+  IMPLEMENTATION REQUIREMENTS:
+  - MUST query GA4 with dimensions: ['sessionDefaultChannelGroup'] only
+  - MUST NOT include 'date' dimension to prevent user double-counting
+  - MUST filter to paid channels: ['Paid Search', 'Display', 'Paid Video']
+  - sumUsers() and sumSessions() MUST use dimensionValues[0] for channel
 GET /api/dashboard/charts/traffic
 GET /api/dashboard/charts/devices
 GET /api/dashboard/charts/geographic

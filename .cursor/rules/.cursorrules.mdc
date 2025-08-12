@@ -71,6 +71,13 @@ CRITICAL RULES
 - DO NOT modify unless explicitly asked
 - It uses stdio, not HTTP
 
+## 1.5. CRITICAL GA4 DATA CALCULATION RULES
+- Total Users and Total Sessions MUST query WITHOUT date dimension
+- Use `dimensions: ['sessionDefaultChannelGroup']` ONLY
+- NEVER use `dimensions: ['date', 'sessionDefaultChannelGroup']` - causes double-counting
+- sumUsers() and sumSessions() MUST use dimensionValues[0] for channel
+- This ensures accurate unique user counts for the date range
+
 ## 2. Supabase Auth Pattern
 - Use Supabase client SDK for ALL auth operations
 - No custom JWT handling needed
@@ -80,6 +87,9 @@ CRITICAL RULES
 ## 3. Single GA4 Property (MVP)
 - ALL users see the SAME GA4 data
 - Sessions and Users metrics filtered to PAID CHANNELS ONLY (Paid Search, Display, Paid Video)
+- **CRITICAL**: Query MUST use `dimensions: ['sessionDefaultChannelGroup']` WITHOUT date dimension
+- Including date dimension causes double-counting of users across multiple days
+- sumUsers() and sumSessions() functions MUST use dimensionValues[0] for channel group
 - Only spend data is user-specific
 - Document this limitation clearly
 - Multi-tenant is FUTURE scope
@@ -343,14 +353,15 @@ app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'),
 ## GA4 Paid Channel Filtering Pattern
 ----
 // Backend - Dashboard API with Channel Filtering
+// CRITICAL: Do NOT include 'date' dimension to avoid double-counting users
 const ga4Data = await analyticsCore.queryAnalytics({
-  dimensions: ['date', 'defaultChannelGroup'],
+  dimensions: ['sessionDefaultChannelGroup'], // NO date dimension!
   metrics: ['sessions', 'totalUsers', 'bounceRate'],
   startDate,
   endDate,
   dimensionFilter: {
     filter: {
-      fieldName: 'defaultChannelGroup',
+      fieldName: 'sessionDefaultChannelGroup',
       inListFilter: {
         values: ['Paid Search', 'Display', 'Paid Video']
       }
@@ -358,9 +369,23 @@ const ga4Data = await analyticsCore.queryAnalytics({
   }
 });
 
-// Helper functions sum only filtered data
-const totalSessions = sumSessions(ga4Data); // Only paid channels
-const totalUsers = sumUsers(ga4Data);       // Only paid channels
+// Helper functions MUST use dimensionValues[0] since no date dimension
+const sumUsers = (ga4Data) => {
+  if (!ga4Data || !ga4Data.rows) return 0;
+  
+  return ga4Data.rows.reduce((sum, row) => {
+    const userMetricIndex = ga4Data.metricHeaders?.findIndex(
+      header => header.name === 'totalUsers'
+    );
+    
+    if (userMetricIndex >= 0 && row.metricValues) {
+      const userValue = parseInt(row.metricValues[userMetricIndex].value || 0);
+      const channelGroup = row.dimensionValues?.[0]?.value || 'unknown'; // Index 0!
+      return sum + userValue;
+    }
+    return sum;
+  }, 0);
+};
 
 // Frontend - Clear labeling for paid channel data
 <MetricCard
@@ -386,7 +411,7 @@ SUPABASE_ANON_KEY=xxxxx
 SUPABASE_SERVICE_KEY=xxxxx  # For admin operations
 
 # Server
-API_PORT=5000
+API_PORT=5050
 NODE_ENV=development
 ----
 
@@ -578,6 +603,13 @@ CRITICAL RULES
 - DO NOT modify unless explicitly asked
 - It uses stdio, not HTTP
 
+## 1.5. CRITICAL GA4 DATA CALCULATION RULES
+- Total Users and Total Sessions MUST query WITHOUT date dimension
+- Use `dimensions: ['sessionDefaultChannelGroup']` ONLY
+- NEVER use `dimensions: ['date', 'sessionDefaultChannelGroup']` - causes double-counting
+- sumUsers() and sumSessions() MUST use dimensionValues[0] for channel
+- This ensures accurate unique user counts for the date range
+
 ## 2. Supabase Auth Pattern
 - Use Supabase client SDK for ALL auth operations
 - No custom JWT handling needed
@@ -587,6 +619,9 @@ CRITICAL RULES
 ## 3. Single GA4 Property (MVP)
 - ALL users see the SAME GA4 data
 - Sessions and Users metrics filtered to PAID CHANNELS ONLY (Paid Search, Display, Paid Video)
+- **CRITICAL**: Query MUST use `dimensions: ['sessionDefaultChannelGroup']` WITHOUT date dimension
+- Including date dimension causes double-counting of users across multiple days
+- sumUsers() and sumSessions() functions MUST use dimensionValues[0] for channel group
 - Only spend data is user-specific
 - Document this limitation clearly
 - Multi-tenant is FUTURE scope
@@ -850,14 +885,15 @@ app.post('/api/upload/pdf', verifySupabaseToken, upload.single('file'),
 ## GA4 Paid Channel Filtering Pattern
 ----
 // Backend - Dashboard API with Channel Filtering
+// CRITICAL: Do NOT include 'date' dimension to avoid double-counting users
 const ga4Data = await analyticsCore.queryAnalytics({
-  dimensions: ['date', 'defaultChannelGroup'],
+  dimensions: ['sessionDefaultChannelGroup'], // NO date dimension!
   metrics: ['sessions', 'totalUsers', 'bounceRate'],
   startDate,
   endDate,
   dimensionFilter: {
     filter: {
-      fieldName: 'defaultChannelGroup',
+      fieldName: 'sessionDefaultChannelGroup',
       inListFilter: {
         values: ['Paid Search', 'Display', 'Paid Video']
       }
@@ -865,9 +901,23 @@ const ga4Data = await analyticsCore.queryAnalytics({
   }
 });
 
-// Helper functions sum only filtered data
-const totalSessions = sumSessions(ga4Data); // Only paid channels
-const totalUsers = sumUsers(ga4Data);       // Only paid channels
+// Helper functions MUST use dimensionValues[0] since no date dimension
+const sumUsers = (ga4Data) => {
+  if (!ga4Data || !ga4Data.rows) return 0;
+  
+  return ga4Data.rows.reduce((sum, row) => {
+    const userMetricIndex = ga4Data.metricHeaders?.findIndex(
+      header => header.name === 'totalUsers'
+    );
+    
+    if (userMetricIndex >= 0 && row.metricValues) {
+      const userValue = parseInt(row.metricValues[userMetricIndex].value || 0);
+      const channelGroup = row.dimensionValues?.[0]?.value || 'unknown'; // Index 0!
+      return sum + userValue;
+    }
+    return sum;
+  }, 0);
+};
 
 // Frontend - Clear labeling for paid channel data
 <MetricCard
@@ -893,7 +943,7 @@ SUPABASE_ANON_KEY=xxxxx
 SUPABASE_SERVICE_KEY=xxxxx  # For admin operations
 
 # Server
-API_PORT=5000
+API_PORT=5050
 NODE_ENV=development
 ----
 
