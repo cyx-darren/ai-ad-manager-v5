@@ -9,7 +9,7 @@ const extractCampaignCount = async (analyticsCore, startDate, endDate) => {
   try {
     // Query GA4 for campaign data from paid channels
     const campaignData = await analyticsCore.queryAnalytics({
-      dimensions: ['campaign', 'sessionDefaultChannelGroup'],
+      dimensions: ['sessionCampaignName', 'sessionDefaultChannelGroup'],
       metrics: ['sessions'],
       startDate,
       endDate,
@@ -34,8 +34,9 @@ const extractCampaignCount = async (analyticsCore, startDate, endDate) => {
       const campaign = row.dimensionValues?.[0]?.value;
       const sessions = parseInt(row.metricValues?.[0]?.value || 0);
       
-      // Only count campaigns with actual sessions and exclude (not set)
-      if (campaign && campaign !== '(not set)' && sessions > 0) {
+      // Only count real campaigns - exclude GA4 placeholder values
+      const excludedValues = ['(not set)', '(referral)', '(direct)', '(organic)', '(none)'];
+      if (campaign && !excludedValues.includes(campaign) && sessions > 0) {
         uniqueCampaigns.add(campaign);
       }
     });
