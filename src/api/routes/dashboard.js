@@ -27,7 +27,7 @@ const sumSessions = (ga4Data) => {
       // Sum all sessions from paid traffic channels
       // The filtering is already done in the GA4 query for paid channels
       const sessionValue = parseInt(row.metricValues[sessionMetricIndex].value || 0);
-      const channelGroup = row.dimensionValues?.[1]?.value || 'unknown';
+      const channelGroup = row.dimensionValues?.[0]?.value || 'unknown';
       console.log(`Adding ${sessionValue} sessions from channel: ${channelGroup}`);
       return sum + sessionValue;
     }
@@ -50,7 +50,7 @@ const sumUsers = (ga4Data) => {
       // Sum all users from paid traffic channels
       // The filtering is already done in the GA4 query for paid channels
       const userValue = parseInt(row.metricValues[userMetricIndex].value || 0);
-      const channelGroup = row.dimensionValues?.[1]?.value || 'unknown';
+      const channelGroup = row.dimensionValues?.[0]?.value || 'unknown';
       console.log(`Adding ${userValue} users from channel: ${channelGroup}`);
       return sum + userValue;
     }
@@ -118,8 +118,10 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       
       // Query by sessionDefaultChannelGroup to get exact paid traffic categories
       // This properly captures Paid Search, Display, and Paid Video traffic
+      // Note: We don't include 'date' dimension for totalUsers to avoid double-counting
+      // users who visit on multiple days
       ga4Data = await analyticsCore.queryAnalytics({
-        dimensions: ['date', 'sessionDefaultChannelGroup'],
+        dimensions: ['sessionDefaultChannelGroup'],
         metrics: ['sessions', 'totalUsers', 'bounceRate'],
         startDate,
         endDate,
