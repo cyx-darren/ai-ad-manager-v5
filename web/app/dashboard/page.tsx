@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import MetricCard from '@/components/MetricCard'
 import DateRangePicker from '@/components/DateRangePicker'
+import TrafficChart from '@/components/charts/TrafficChart'
+import DeviceChart from '@/components/charts/DeviceChart'
+import GeographicChart from '@/components/charts/GeographicChart'
+import CampaignChart from '@/components/charts/CampaignChart'
 import Link from 'next/link'
 import { RefreshCw } from 'lucide-react'
 
@@ -45,6 +49,13 @@ export default function Dashboard() {
     endDate: new Date()
   })
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [charts, setCharts] = useState({
+    traffic: null,
+    devices: null,
+    geographic: null,
+    campaigns: null
+  })
+  const [chartsLoading, setChartsLoading] = useState(false)
 
   useEffect(() => {
     if (!loading && !user) {
@@ -52,10 +63,11 @@ export default function Dashboard() {
     }
   }, [user, loading, router])
 
-  const fetchMetrics = useCallback(async () => {
+  const fetchAllData = useCallback(async () => {
     if (!user) return
     
     setMetricsLoading(true)
+    setChartsLoading(true)
     setError(null)
     
     try {
@@ -71,29 +83,50 @@ export default function Dashboard() {
       const startStr = dateRange.startDate.toISOString().split('T')[0]
       const endStr = dateRange.endDate.toISOString().split('T')[0]
       
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`
-          }
-        }
-      )
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch metrics: ${response.status}`)
+      const headers = {
+        'Authorization': `Bearer ${session.access_token}`
       }
       
-      const data = await response.json()
-      setMetrics(data)
+      // Fetch all data in parallel
+      const [metricsRes, trafficRes, devicesRes, geoRes, campaignsRes] = await Promise.all([
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/traffic?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/devices?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/geographic?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/campaigns?startDate=${startStr}&endDate=${endStr}`, { headers })
+      ])
+      
+      if (!metricsRes.ok) {
+        throw new Error(`Failed to fetch metrics: ${metricsRes.status}`)
+      }
+      
+      const [metricsData, trafficData, devicesData, geoData, campaignsData] = await Promise.all([
+        metricsRes.json(),
+        trafficRes.ok ? trafficRes.json() : null,
+        devicesRes.ok ? devicesRes.json() : null,
+        geoRes.ok ? geoRes.json() : null,
+        campaignsRes.ok ? campaignsRes.json() : null
+      ])
+      
+      setMetrics(metricsData)
+      setCharts({
+        traffic: trafficData,
+        devices: devicesData,
+        geographic: geoData,
+        campaigns: campaignsData
+      })
       setLastUpdated(new Date())
     } catch (error) {
-      console.error('Failed to fetch metrics:', error)
-      setError(error instanceof Error ? error.message : 'Failed to fetch metrics')
+      console.error('Failed to fetch data:', error)
+      setError(error instanceof Error ? error.message : 'Failed to fetch dashboard data')
     } finally {
       setMetricsLoading(false)
+      setChartsLoading(false)
     }
   }, [user, dateRange])
+
+  // Legacy function for compatibility
+  const fetchMetrics = fetchAllData
 
   // Fetch metrics when user or date range changes
   useEffect(() => {
@@ -290,6 +323,31 @@ export default function Dashboard() {
             </>
           )}
         </div>
+
+        {/* Charts Section */}
+        {!metricsLoading && metrics && (
+          <div className="mt-8">
+            <h2 className="text-xl font-semibold mb-6 text-gray-900">Analytics Charts</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {chartsLoading ? (
+                // Loading skeletons for charts
+                [...Array(4)].map((_, i) => (
+                  <div key={i} className="bg-white rounded-lg shadow p-6 animate-pulse">
+                    <div className="h-4 bg-gray-200 rounded w-1/3 mb-4"></div>
+                    <div className="h-64 bg-gray-200 rounded"></div>
+                  </div>
+                ))
+              ) : (
+                <>
+                  <TrafficChart data={charts.traffic} />
+                  <DeviceChart data={charts.devices} />
+                  <GeographicChart data={charts.geographic} />
+                  <CampaignChart data={charts.campaigns} />
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Mock Data Notice */}
         {metrics && metrics.mockDataFields && metrics.mockDataFields.length > 0 && (

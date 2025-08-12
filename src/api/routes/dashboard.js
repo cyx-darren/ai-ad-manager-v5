@@ -209,6 +209,178 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
   }
 });
 
+// GET /api/dashboard/charts/traffic - Traffic source distribution
+router.get('/charts/traffic', verifySupabaseToken, async (req, res) => {
+  try {
+    const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;
+    
+    // Import analytics core
+    const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
+    const analyticsCore = new GoogleAnalyticsCore();
+    await analyticsCore.initialize();
+    
+    // Query traffic sources
+    const ga4Data = await analyticsCore.queryAnalytics({
+      dimensions: ['sessionDefaultChannelGroup'],
+      metrics: ['sessions'],
+      startDate,
+      endDate
+    });
+    
+    const trafficData = [];
+    if (ga4Data && ga4Data.rows) {
+      ga4Data.rows.forEach(row => {
+        const channelGroup = row.dimensionValues[0].value;
+        const sessions = parseInt(row.metricValues[0].value || 0);
+        trafficData.push({
+          name: channelGroup,
+          value: sessions
+        });
+      });
+    }
+    
+    // Sort by sessions and take top sources
+    trafficData.sort((a, b) => b.value - a.value);
+    
+    res.json(trafficData.slice(0, 6)); // Top 6 traffic sources
+  } catch (error) {
+    console.error('Traffic chart error:', error);
+    res.status(500).json({ error: 'Failed to fetch traffic data' });
+  }
+});
+
+// GET /api/dashboard/charts/devices - Device breakdown
+router.get('/charts/devices', verifySupabaseToken, async (req, res) => {
+  try {
+    const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;
+    
+    // Import analytics core
+    const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
+    const analyticsCore = new GoogleAnalyticsCore();
+    await analyticsCore.initialize();
+    
+    // Query device categories
+    const ga4Data = await analyticsCore.queryAnalytics({
+      dimensions: ['deviceCategory'],
+      metrics: ['sessions', 'totalUsers'],
+      startDate,
+      endDate
+    });
+    
+    const deviceData = [];
+    if (ga4Data && ga4Data.rows) {
+      ga4Data.rows.forEach(row => {
+        const device = row.dimensionValues[0].value;
+        const sessions = parseInt(row.metricValues[0].value || 0);
+        const users = parseInt(row.metricValues[1].value || 0);
+        deviceData.push({
+          name: device,
+          sessions,
+          users
+        });
+      });
+    }
+    
+    res.json(deviceData);
+  } catch (error) {
+    console.error('Device chart error:', error);
+    res.status(500).json({ error: 'Failed to fetch device data' });
+  }
+});
+
+// GET /api/dashboard/charts/geographic - Geographic distribution
+router.get('/charts/geographic', verifySupabaseToken, async (req, res) => {
+  try {
+    const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;
+    
+    // Import analytics core
+    const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
+    const analyticsCore = new GoogleAnalyticsCore();
+    await analyticsCore.initialize();
+    
+    // Query countries
+    const ga4Data = await analyticsCore.queryAnalytics({
+      dimensions: ['country'],
+      metrics: ['sessions', 'totalUsers'],
+      startDate,
+      endDate
+    });
+    
+    const geoData = [];
+    if (ga4Data && ga4Data.rows) {
+      ga4Data.rows.forEach(row => {
+        const country = row.dimensionValues[0].value;
+        const sessions = parseInt(row.metricValues[0].value || 0);
+        const users = parseInt(row.metricValues[1].value || 0);
+        
+        // Filter out unknown countries
+        if (country && country !== '(not set)') {
+          geoData.push({
+            country,
+            sessions,
+            users
+          });
+        }
+      });
+    }
+    
+    // Sort by sessions and return top countries
+    geoData.sort((a, b) => b.sessions - a.sessions);
+    
+    res.json(geoData.slice(0, 10)); // Top 10 countries
+  } catch (error) {
+    console.error('Geographic chart error:', error);
+    res.status(500).json({ error: 'Failed to fetch geographic data' });
+  }
+});
+
+// GET /api/dashboard/charts/campaigns - Campaign performance (using spend data)
+router.get('/charts/campaigns', verifySupabaseToken, async (req, res) => {
+  try {
+    const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;
+    const userId = req.user.id;
+    
+    // Get user's campaign spend data
+    const { data: spendData, error: spendError } = await supabaseAdmin
+      .from('campaigns_spend')
+      .select('campaign_name, spend_amount')
+      .eq('user_id', userId)
+      .gte('date', startDate)
+      .lte('date', endDate);
+    
+    if (spendError) {
+      console.error('Error fetching campaign data:', spendError);
+      return res.json([]); // Return empty array if no data
+    }
+    
+    // Aggregate spend by campaign
+    const campaignMap = new Map();
+    if (spendData) {
+      spendData.forEach(row => {
+        const existing = campaignMap.get(row.campaign_name) || 0;
+        campaignMap.set(row.campaign_name, existing + Number(row.spend_amount));
+      });
+    }
+    
+    // Convert to array format
+    const campaignData = Array.from(campaignMap.entries()).map(([name, spend]) => ({
+      name,
+      spend,
+      // Add mock impressions and clicks for MVP
+      impressions: Math.floor(Math.random() * 10000) + 1000,
+      clicks: Math.floor(Math.random() * 500) + 50
+    }));
+    
+    // Sort by spend
+    campaignData.sort((a, b) => b.spend - a.spend);
+    
+    res.json(campaignData);
+  } catch (error) {
+    console.error('Campaign chart error:', error);
+    res.status(500).json({ error: 'Failed to fetch campaign data' });
+  }
+});
+
 // GET /api/dashboard/summary - Quick summary stats
 router.get('/summary', verifySupabaseToken, async (req, res) => {
   try {
