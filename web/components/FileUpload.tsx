@@ -26,10 +26,28 @@ export default function FileUpload({ onUploadSuccess, onUploadError }: FileUploa
     try {
       // Get current session
       const { supabase } = await import('@/lib/supabase')
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      
+      if (sessionError) {
+        console.error('Session error:', sessionError)
+        throw new Error('Session error. Please refresh the page and try again.')
+      }
       
       if (!session?.access_token) {
         throw new Error('No valid session found. Please log in again.')
+      }
+      
+      // Verify token is still valid before upload
+      try {
+        const testResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload/history`, {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        })
+        if (testResponse.status === 401) {
+          throw new Error('Session expired. Please refresh the page and log in again.')
+        }
+      } catch (tokenTestError) {
+        console.error('Token validation error:', tokenTestError)
+        throw new Error('Authentication failed. Please refresh the page and try again.')
       }
       
       const formData = new FormData()

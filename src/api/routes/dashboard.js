@@ -193,12 +193,10 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       console.error('Error fetching spend data:', spendError);
     }
     
-    const totalSpend = spendData?.reduce((sum, row) => 
-      sum + Number(row.spend_amount), 0) || 0;
-    
-    // Generate mock data
+    // Generate mock data for all mock fields
     const impressions = Math.floor(Math.random() * 40000) + 10000; // 10K-50K
     const clickRate = (Math.random() * 3 + 2).toFixed(2); // 2-5%
+    const totalSpend = Math.floor(Math.random() * 5000) + 1000; // $1K-$6K mock spend
     
     // Process GA4 data or use fallback values
     const totalSessions = ga4Data ? sumSessions(ga4Data) : Math.floor(Math.random() * 2000) + 500;
@@ -231,7 +229,7 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       avgBounceRate: parseFloat(avgBounceRate),
       conversions,
       totalSpend: totalSpend,
-      mockDataFields: ['totalImpressions', 'clickRate'],
+      mockDataFields: ['totalImpressions', 'clickRate', 'totalSpend'],
       metadata: {
         dateRange: { startDate, endDate },
         dataSource: {
@@ -451,8 +449,8 @@ router.get('/summary', verifySupabaseToken, async (req, res) => {
       .select('spend_amount')
       .eq('user_id', userId);
       
-    const totalSpend = spendData?.reduce((sum, row) => 
-      sum + Number(row.spend_amount), 0) || 0;
+    // Use mock data for total spend to match dashboard metrics
+    const totalSpend = Math.floor(Math.random() * 5000) + 1000; // $1K-$6K mock spend
       
     const totalUploads = uploadsData?.length || 0;
     

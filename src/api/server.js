@@ -5,6 +5,8 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { GoogleAnalyticsCore } from '../core/analytics-core.js';
 import { verifySupabaseToken } from './middleware/auth.js';
+import { cacheMiddleware, getCacheStats } from './middleware/cache.js';
+import { apiLogger, requestLogger } from '../utils/logger.js';
 
 // Import route modules
 import analyticsRoutes from './routes/analytics.js';
@@ -66,10 +68,11 @@ class APIServer {
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
     // Request logging middleware
-    this.app.use((req, res, next) => {
-      console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-      next();
-    });
+    this.app.use(requestLogger(apiLogger));
+
+    // Cache middleware for GET requests (improves performance)
+    this.app.use('/api/analytics', cacheMiddleware);
+    this.app.use('/api/dashboard', cacheMiddleware);
 
     // Make analytics core available to routes
     this.app.use((req, res, next) => {
@@ -79,6 +82,29 @@ class APIServer {
   }
 
   initializeRoutes() {
+    // Cache stats endpoint
+    this.app.get('/api/cache/stats', (req, res) => {
+      res.json(getCacheStats());
+    });
+
+    // Error tracking endpoint
+    this.app.post('/api/errors', (req, res) => {
+      const errorData = req.body;
+      
+      // Log error server-side
+      console.error('[CLIENT ERROR]', {
+        timestamp: errorData.timestamp,
+        message: errorData.message,
+        type: errorData.type,
+        url: errorData.context?.url,
+        userId: errorData.context?.userId
+      });
+      
+      // In production, you might want to store these in a database
+      // For now, we'll just acknowledge receipt
+      res.json({ success: true, id: errorData.id });
+    });
+
     // Health check endpoint
     this.app.get('/api/health', async (req, res) => {
       try {
@@ -198,20 +224,21 @@ class APIServer {
   async start() {
     try {
       // Skip analytics core initialization for now
-      console.log('🔧 Skipping Google Analytics Core initialization for testing...');
+      apiLogger.info('Skipping Google Analytics Core initialization for testing...');
 
       // Start HTTP server
       this.server = this.app.listen(this.port, () => {
-        console.log(`🚀 API Server running on port ${this.port}`);
-        console.log(`📊 Health check: http://localhost:${this.port}/api/health`);
-        console.log(`📤 Upload API: http://localhost:${this.port}/api/upload`);
-        console.log(`📈 Dashboard API: http://localhost:${this.port}/api/dashboard`);
-        console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+        apiLogger.info(`API Server running on port ${this.port}`);
+        apiLogger.info(`Health check: http://localhost:${this.port}/api/health`);
+        apiLogger.info(`Cache stats: http://localhost:${this.port}/api/cache/stats`);
+        apiLogger.info(`Upload API: http://localhost:${this.port}/api/upload`);
+        apiLogger.info(`Dashboard API: http://localhost:${this.port}/api/dashboard`);
+        apiLogger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       });
 
       return this.server;
     } catch (error) {
-      console.error('❌ Failed to start API server:', error.message);
+      apiLogger.error('Failed to start API server', { error: error.message, stack: error.stack });
       process.exit(1);
     }
   }

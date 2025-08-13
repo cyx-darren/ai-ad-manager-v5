@@ -319,6 +319,7 @@ export default function Dashboard() {
               value={metrics.totalSpend}
               unit="USD"
               description="Your advertising spend from PDFs"
+              isMockData={metrics.mockDataFields?.includes('totalSpend')}
             />
             </>
           )}
