@@ -1,7 +1,7 @@
 import express from 'express';
 import { supabaseAdmin } from '../../db/supabase-client.js';
 import { verifySupabaseToken } from '../middleware/auth.js';
-import { GoogleAdsCore } from '../../core/ads-core.js';
+import { GoogleAdsCore } from '../../core/ads-core-enhanced.js';
 
 const router = express.Router();
 
@@ -165,10 +165,10 @@ const extractConversions = (ga4Data) => {
   return Math.floor(sessions * conversionRate);
 };
 
-// Add new route for real spend data
+// Add new route for real spend data with currency conversion
 router.get('/spend/google-ads', verifySupabaseToken, async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, includeCredits = 'true' } = req.query;
     
     if (!startDate || !endDate) {
       return res.status(400).json({ 
@@ -177,16 +177,27 @@ router.get('/spend/google-ads', verifySupabaseToken, async (req, res) => {
     }
     
     const spendData = await getCachedOrFetch(
-      'campaign_spend',
+      'campaign_spend_enhanced',
       startDate,
       endDate,
-      () => adsCore.getCampaignSpend(startDate, endDate)
+      () => adsCore.getCampaignSpend(startDate, endDate, includeCredits === 'true')
     );
     
     res.json({
-      totalSpend: spendData.totalSpend,
+      // Primary display values (net spend in original currency - SGD)
+      totalSpend: spendData.netSpend.original,
+      currency: spendData.currency, // Use the account currency (SGD) not displayCurrency
+      
+      // Detailed breakdown
+      breakdown: {
+        gross: spendData.grossSpend,
+        net: spendData.netSpend,
+        credits: spendData.invalidActivityCredits
+      },
+      
       campaigns: spendData.campaigns,
-      currency: spendData.currency,
+      exchangeRate: spendData.exchangeRate,
+      metadata: spendData.metadata,
       source: 'google_ads_api',
       lastUpdated: new Date().toISOString()
     });
@@ -199,8 +210,46 @@ router.get('/spend/google-ads', verifySupabaseToken, async (req, res) => {
       totalSpend: 2992,
       campaigns: [],
       currency: 'USD',
+      breakdown: {
+        gross: { usd: 2992, original: 2992, originalCurrency: 'USD' },
+        net: { usd: 2992, original: 2992, originalCurrency: 'USD' },
+        credits: { usd: 0, original: 0, originalCurrency: 'USD' }
+      },
       source: 'mock_data',
       error: 'Google Ads API unavailable, showing mock data'
+    });
+  }
+});
+
+// Add route for spend reconciliation
+router.get('/spend/reconciliation', verifySupabaseToken, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({ 
+        error: 'Start date and end date required' 
+      });
+    }
+    
+    const reconciliation = await getCachedOrFetch(
+      'spend_reconciliation',
+      startDate,
+      endDate,
+      () => adsCore.getSpendReconciliation(startDate, endDate)
+    );
+    
+    res.json({
+      ...reconciliation,
+      source: 'google_ads_api',
+      lastUpdated: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Google Ads reconciliation error:', error);
+    res.status(500).json({
+      error: 'Failed to fetch spend reconciliation data',
+      message: error.message
     });
   }
 });
@@ -282,29 +331,41 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       ga4Error = error.message;
     }
     
-    // Get Google Ads data
+    // Get Google Ads data with enhanced currency handling
     let adsData;
     try {
       adsData = await getCachedOrFetch(
-        'ads_complete',
+        'ads_complete_enhanced',
         startDate,
         endDate,
         async () => {
           const [spend, metrics] = await Promise.all([
-            adsCore.getCampaignSpend(startDate, endDate),
+            adsCore.getCampaignSpend(startDate, endDate, true), // Include credits
             adsCore.getAdsMetrics(startDate, endDate)
           ]);
-          return { ...spend, ...metrics };
+          return { 
+            ...spend, 
+            ...metrics,
+            // Use net spend in original currency (SGD) for dashboard display
+            totalSpend: spend.netSpend.original,
+            displayCurrency: spend.currency,
+            originalCurrency: spend.currency,
+            exchangeRate: spend.exchangeRate,
+            metadata: spend.metadata
+          };
         }
       );
     } catch (adsError) {
       console.error('Google Ads error, using mock:', adsError);
       // Use mock data as fallback
       adsData = {
-        totalSpend: 2992,
+        totalSpend: 4000, // Mock SGD amount
         impressions: Math.floor(Math.random() * 40000) + 10000,
         ctr: (Math.random() * 3 + 2).toFixed(2),
-        source: 'mock_data'
+        source: 'mock_data',
+        displayCurrency: 'SGD',
+        originalCurrency: 'SGD',
+        exchangeRate: 1
       };
     }
     
@@ -336,10 +397,17 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       dataSource: adsData.source || 'google_ads_api',
       mockDataFields: adsData.source === 'mock_data' ? 
         ['totalImpressions', 'clickRate', 'totalSpend'] : [],
+      currency: {
+        display: adsData.originalCurrency || 'SGD', // Display in account currency (SGD)
+        original: adsData.originalCurrency || 'SGD',
+        exchangeRate: adsData.exchangeRate || 1,
+        conversionApplied: false // No conversion needed when displaying in original currency
+      },
       metadata: {
         dateRange: { startDate, endDate },
         user: req.user.email,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        adsMetadata: adsData.metadata || null
       }
     });
   } catch (error) {

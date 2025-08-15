@@ -13,9 +13,10 @@ interface CampaignData {
 
 interface CampaignChartProps {
   data: CampaignData[] | null
+  isLiveData?: boolean
 }
 
-export default function CampaignChart({ data }: CampaignChartProps) {
+export default function CampaignChart({ data, isLiveData = false }: CampaignChartProps) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-6">
@@ -53,7 +54,14 @@ export default function CampaignChart({ data }: CampaignChartProps) {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h3 className="text-lg font-semibold mb-4">Campaign Performance</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold">Campaign Performance</h3>
+        {isLiveData && (
+          <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">
+            Live Data
+          </span>
+        )}
+      </div>
       <ResponsiveContainer width="100%" height={300}>
         <PieChart>
           <Pie

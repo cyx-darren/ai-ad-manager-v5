@@ -9,6 +9,7 @@ import TrafficChart from '@/components/charts/TrafficChart'
 import DeviceChart from '@/components/charts/DeviceChart'
 import GeographicChart from '@/components/charts/GeographicChart'
 import CampaignChart from '@/components/charts/CampaignChart'
+import SpendBreakdown from '@/components/SpendBreakdown'
 import Link from 'next/link'
 import { RefreshCw } from 'lucide-react'
 
@@ -22,6 +23,13 @@ interface DashboardMetrics {
   conversions: number
   totalSpend: number
   mockDataFields: string[]
+  dataSource?: string
+  currency?: {
+    display: string
+    original: string
+    exchangeRate: number
+    conversionApplied: boolean
+  }
   metadata?: {
     dateRange: {
       startDate: string
@@ -34,8 +42,33 @@ interface DashboardMetrics {
     }
     user: string
     timestamp: string
+    adsMetadata?: any
   }
   warnings?: string[]
+}
+
+interface SpendData {
+  total: number
+  source: string
+  campaigns: Array<{
+    id?: string
+    name: string
+    spend: number
+    impressions?: number
+    clicks?: number
+    conversions?: number
+    date?: string
+  }>
+  currency: string
+}
+
+interface AdsMetrics {
+  impressions: number
+  clicks: number
+  ctr: number
+  source: string
+  conversions?: number
+  avgCpc?: number
 }
 
 export default function Dashboard() {
@@ -56,6 +89,19 @@ export default function Dashboard() {
     campaigns: null
   })
   const [chartsLoading, setChartsLoading] = useState(false)
+  const [spendData, setSpendData] = useState<SpendData>({
+    total: 0,
+    source: 'loading',
+    campaigns: [],
+    currency: 'USD'
+  })
+  const [adsMetrics, setAdsMetrics] = useState<AdsMetrics>({
+    impressions: 0,
+    clicks: 0,
+    ctr: 0,
+    source: 'loading'
+  })
+  const [showBreakdown, setShowBreakdown] = useState(false)
 
   useEffect(() => {
     if (!loading && !user) {
@@ -87,9 +133,11 @@ export default function Dashboard() {
         'Authorization': `Bearer ${session.access_token}`
       }
       
-      // Fetch all data in parallel
-      const [metricsRes, trafficRes, devicesRes, geoRes, campaignsRes] = await Promise.all([
+      // Fetch all data in parallel including Google Ads data
+      const [metricsRes, spendRes, adsRes, trafficRes, devicesRes, geoRes, campaignsRes] = await Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/spend/google-ads?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/ads-metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/traffic?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/devices?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/geographic?startDate=${startStr}&endDate=${endStr}`, { headers }),
@@ -100,8 +148,10 @@ export default function Dashboard() {
         throw new Error(`Failed to fetch metrics: ${metricsRes.status}`)
       }
       
-      const [metricsData, trafficData, devicesData, geoData, campaignsData] = await Promise.all([
+      const [metricsData, spendDataRes, adsDataRes, trafficData, devicesData, geoData, campaignsData] = await Promise.all([
         metricsRes.json(),
+        spendRes.ok ? spendRes.json() : null,
+        adsRes.ok ? adsRes.json() : null,
         trafficRes.ok ? trafficRes.json() : null,
         devicesRes.ok ? devicesRes.json() : null,
         geoRes.ok ? geoRes.json() : null,
@@ -109,11 +159,35 @@ export default function Dashboard() {
       ])
       
       setMetrics(metricsData)
+      
+      // Set Google Ads spend data
+      if (spendDataRes) {
+        setSpendData({
+          total: spendDataRes.totalSpend || 0,
+          source: spendDataRes.source || 'mock_data',
+          campaigns: spendDataRes.campaigns || [],
+          currency: spendDataRes.currency || 'USD'
+        })
+      }
+      
+      // Set Google Ads metrics data
+      if (adsDataRes) {
+        setAdsMetrics({
+          impressions: adsDataRes.impressions || 0,
+          clicks: adsDataRes.clicks || 0,
+          ctr: adsDataRes.ctr || 0,
+          source: adsDataRes.source || 'mock_data',
+          conversions: adsDataRes.conversions,
+          avgCpc: adsDataRes.avgCpc
+        })
+      }
+      
+      // Use Google Ads campaign data if available, otherwise use chart data
       setCharts({
         traffic: trafficData,
         devices: devicesData,
         geographic: geoData,
-        campaigns: campaignsData
+        campaigns: spendDataRes?.campaigns?.length > 0 ? spendDataRes.campaigns : campaignsData
       })
       setLastUpdated(new Date())
     } catch (error) {
@@ -193,9 +267,26 @@ export default function Dashboard() {
                 onClick={fetchMetrics}
                 disabled={metricsLoading}
                 className="p-2 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow disabled:opacity-50"
-                title="Refresh data"
+                title="Refresh all data"
               >
                 <RefreshCw className={`h-4 w-4 ${metricsLoading ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={async () => {
+                  // Manual refresh for Google Ads data
+                  const { supabase } = await import('@/lib/supabase')
+                  const { data: { session } } = await supabase.auth.getSession()
+                  if (session?.access_token) {
+                    // Clear cache by calling refresh endpoint if it exists
+                    fetchMetrics()
+                  }
+                }}
+                className="p-2 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
+                title="Refresh Google Ads data"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
               </button>
               <Link
                 href="/uploads"
@@ -276,17 +367,17 @@ export default function Dashboard() {
             
             <MetricCard
               title="Total Impressions"
-              value={metrics.totalImpressions}
-              isMockData={metrics.mockDataFields?.includes('totalImpressions') || false}
-              description="Ad views and displays"
+              value={adsMetrics.impressions || metrics.totalImpressions}
+              isMockData={adsMetrics.source === 'mock_data' || metrics.mockDataFields?.includes('totalImpressions') || false}
+              description={`Ad views from ${adsMetrics.source === 'google_ads_api' ? 'Google Ads' : 'mock data'}`}
             />
             
             <MetricCard
               title="Click Rate"
-              value={metrics.clickRate}
+              value={adsMetrics.ctr || metrics.clickRate}
               unit="%"
-              isMockData={metrics.mockDataFields?.includes('clickRate') || false}
-              description="Percentage of users who clicked"
+              isMockData={adsMetrics.source === 'mock_data' || metrics.mockDataFields?.includes('clickRate') || false}
+              description={`CTR from ${adsMetrics.source === 'google_ads_api' ? 'Google Ads' : 'mock data'}`}
             />
             
             <MetricCard
@@ -316,10 +407,25 @@ export default function Dashboard() {
             
             <MetricCard
               title="Total Spend"
-              value={metrics.totalSpend}
-              unit="USD"
-              description="Your advertising spend from Google Ads API"
-              isMockData={metrics.mockDataFields?.includes('totalSpend')}
+              value={spendData.total || metrics.totalSpend}
+              unit={metrics?.currency?.display || spendData.currency || "SGD"}
+              description={
+                <div className="space-y-1">
+                  <div>{`Net spend from ${spendData.source === 'google_ads_api' ? 'Google Ads API' : spendData.source === 'mock_data' ? 'mock data' : 'loading...'}`}</div>
+                  <div className="text-xs text-gray-600">
+                    Account currency: {metrics?.currency?.display || 'SGD'}
+                  </div>
+                  {spendData.source === 'google_ads_api' && (
+                    <button
+                      onClick={() => setShowBreakdown(true)}
+                      className="text-xs text-blue-600 hover:text-blue-800 underline mt-1"
+                    >
+                      View breakdown & reconciliation
+                    </button>
+                  )}
+                </div>
+              }
+              isMockData={spendData.source === 'mock_data' || metrics.mockDataFields?.includes('totalSpend')}
             />
             </>
           )}
@@ -343,7 +449,10 @@ export default function Dashboard() {
                   <TrafficChart data={charts.traffic} />
                   <DeviceChart data={charts.devices} />
                   <GeographicChart data={charts.geographic} />
-                  <CampaignChart data={charts.campaigns} />
+                  <CampaignChart 
+                    data={charts.campaigns} 
+                    isLiveData={spendData.source === 'google_ads_api'}
+                  />
                 </>
               )}
             </div>
@@ -378,6 +487,13 @@ export default function Dashboard() {
             </button>
           </div>
         )}
+        
+        {/* Spend Breakdown Modal */}
+        <SpendBreakdown
+          dateRange={dateRange}
+          isVisible={showBreakdown}
+          onClose={() => setShowBreakdown(false)}
+        />
       </div>
     </div>
   )
