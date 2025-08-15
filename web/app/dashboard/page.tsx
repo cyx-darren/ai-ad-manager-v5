@@ -318,7 +318,7 @@ export default function Dashboard() {
               title="Total Spend"
               value={metrics.totalSpend}
               unit="USD"
-              description="Your advertising spend from PDFs"
+              description="Your advertising spend from Google Ads API"
               isMockData={metrics.mockDataFields?.includes('totalSpend')}
             />
             </>

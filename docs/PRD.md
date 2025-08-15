@@ -1,12 +1,12 @@
 ================================================================================
 PRODUCT REQUIREMENTS DOCUMENT (PRD)
 GOOGLE ANALYTICS DASHBOARD - MVP WITH SUPABASE AUTH
-VERSION 3.0 - SIMPLIFIED AUTHENTICATION
+VERSION 4.0 - WITH GOOGLE ADS API INTEGRATION
 ================================================================================
 
 1. EXECUTIVE SUMMARY
 --------------------
-Build an MVP analytics dashboard that displays Google Analytics 4 (GA4) metrics with spend data extracted from uploaded PDF bills. Uses pure Supabase Authentication for simplicity. Multi-tenant architecture will be added in future iterations.
+Build an MVP analytics dashboard that displays Google Analytics 4 (GA4) metrics with real-time spend and performance data from Google Ads API, with PDF upload capability as override/backup option. Uses pure Supabase Authentication for simplicity. Multi-tenant architecture will be added in future iterations.
 
 2. PROJECT OVERVIEW
 -------------------
@@ -14,7 +14,8 @@ Build an MVP analytics dashboard that displays Google Analytics 4 (GA4) metrics 
 2.1 Objectives
 - Create secure dashboard with Supabase Authentication
 - Display key marketing metrics from GA4 (single property for MVP)
-- Parse and extract spend data from uploaded PDF bills
+- Fetch real-time spend and performance data from Google Ads API
+- Parse and extract spend data from uploaded PDF bills (override/backup)
 - Maintain existing MCP server functionality for AI agents
 - Provide dynamic date range filtering
 - Display data through metric cards and interactive charts
@@ -24,22 +25,25 @@ Build an MVP analytics dashboard that displays Google Analytics 4 (GA4) metrics 
 - Backend: Express REST API (Port 5000)
 - Authentication: Supabase Auth (pure - no NextAuth)
 - Database: Supabase Cloud with Row Level Security (RLS)
-- File Processing: PDF parsing for spend data
+- File Processing: PDF parsing for spend data override
 - MCP Server: Standalone (stdio, no port required)
 - GA4 Integration: Shared core module (single property for MVP)
+- Google Ads Integration: API client for real-time metrics
 
 2.3 MVP Scope vs Future
 MVP (Current):
 - Single GA4 property for all users
-- User-specific spend data from PDFs
+- Single Google Ads account for MVP (multi-account in Phase 2)
+- User-specific spend data from PDFs OR Google Ads API
 - Basic authentication and authorization
-- Mock data for impressions/clicks
+- Real impressions/clicks from Google Ads API (with mock data fallback)
 
 Future (Phase 2):
 - Multi-tenant architecture
 - Multiple GA4 properties
+- Multiple Google Ads accounts (MCC support)
 - Team/organization management
-- Real impressions/clicks data
+- User-specific OAuth for Google Ads
 
 3. TECHNICAL ARCHITECTURE
 -------------------------
@@ -50,13 +54,31 @@ Web Dashboard (localhost:3000)
 React 18 + Tailwind + Supabase Client
          ↓ HTTP (Supabase Token)
 Express REST API (localhost:5000)
-    ↓         ↓           ↓
-GA4 Core   Supabase    PDF Parser
-Module     Client      (pdf-parse)
-    ↓         ↓           ↓
-Single GA4  Supabase    Extracted
-Property    Database    Spend Data
-            (with RLS)
+    ↓         ↓           ↓           ↓
+GA4 Core   Google Ads  Supabase    PDF Parser
+Module     API Client   Client      (pdf-parse)
+    ↓         ↓           ↓           ↓
+Single GA4  Google Ads  Supabase    Extracted
+Property    Account     Database    Spend Data
+                       (with RLS)
+
+Additional Data Source (MVP Enhancement):
+----
+Express REST API (localhost:5000)
+         ↓
+Google Ads API Client
+         ↓
+Google Ads Account
+    ├── Campaign Spend (Real)
+    ├── Impressions (Real)
+    ├── Click Rate (Real)
+    └── Campaign Performance (Real)
+
+Data Priority:
+1. Google Ads API (when available)
+2. PDF Uploads (user override)
+3. Mock Data (fallback)
+----
 
 Separate Process:
 GA4 MCP Server (stdio) → GA4 Core Module → Google Analytics
@@ -80,7 +102,8 @@ GA4 MCP Server (stdio) → GA4 Core Module → Google Analytics
 google-analytics-mcp/
 ├── src/
 │   ├── core/
-│   │   └── analytics-core.js  # Shared GA4 logic
+│   │   ├── analytics-core.js  # Shared GA4 logic
+│   │   └── ads-core.js        # Google Ads API logic
 │   ├── mcp/
 │   │   └── index.js           # MCP Server (DO NOT MODIFY)
 │   ├── api/
@@ -90,6 +113,7 @@ google-analytics-mcp/
 │   │   └── routes/
 │   │       ├── upload.js      # PDF upload endpoint
 │   │       ├── analytics.js   # GA4 endpoints
+│   │       ├── google-ads.js  # Google Ads endpoints
 │   │       ├── spend.js       # Spend data endpoints
 │   │       └── dashboard.js   # Combined data endpoints
 │   └── db/
@@ -138,6 +162,7 @@ google-analytics-mcp/
 - Store parsed data with user_id
 - View upload history
 - Manual correction of parsed data
+- Override Google Ads API data when needed
 
 4.3 Dashboard Metrics (MVP)
 
@@ -145,13 +170,13 @@ METRIC CARDS
 | Metric            | Data Source | Notes                           |
 |-------------------|-------------|---------------------------------|
 | Total Campaigns   | GA4         | From single GA4 property       |
-| Total Impressions | Mock Data   | Random 10K-50K with badge       |
-| Click Rate        | Mock Data   | Random 2-5% with badge          |
+| Total Impressions | Google Ads API / Mock | Real data with fallback   |
+| Click Rate        | Google Ads API / Mock | Real CTR with fallback     |
 | Total Sessions    | GA4         | Paid channels only (Paid Search, Display, Paid Video) |
 | Total Users       | GA4         | Paid channels only (Paid Search, Display, Paid Video) |
 | Avg Bounce Rate   | GA4         | From single GA4 property       |
-| Conversions       | GA4         | From single GA4 property       |
-| Total Spend       | User PDFs   | User-specific from uploads     |
+| Conversions       | Google Ads API / GA4 | Real conversions data      |
+| Total Spend       | Google Ads API / PDFs | API primary, PDFs override |
 
 **CRITICAL: GA4 Data Calculation Rules**
 - Total Sessions and Total Users MUST be filtered to only include paid channels: Paid Search, Display, and Paid Video
@@ -160,6 +185,65 @@ METRIC CARDS
 - This prevents counting the same user multiple times if they visit on different days
 - The sumUsers() and sumSessions() functions must reference dimensionValues[0] for the channel group
 - All users see same GA4 data (single property) but different spend data (user-specific)
+
+4.4 Google Ads Integration (MVP Enhancement)
+
+CAPABILITIES:
+- Fetch real-time campaign spend data
+- Retrieve actual impressions and clicks
+- Calculate true click-through rates
+- Show campaign-level performance breakdown
+
+DATA HIERARCHY:
+1. **Google Ads API (Primary)**: Live data when available
+2. **PDF Uploads (Override)**: User can override with actual bills
+3. **Mock Data (Fallback)**: When API unavailable or during setup
+
+IMPLEMENTATION APPROACH:
+- Single Google Ads account for MVP (configured via env variables)
+- Automatic fallback to mock data on API errors
+- Clear badges indicating data source (Live/PDF/Mock)
+- Rate limit handling and caching for API efficiency
+
+METRICS AVAILABLE FROM GOOGLE ADS:
+| Metric | API Field | Update Frequency |
+|--------|-----------|------------------|
+| Spend | cost_micros | Real-time |
+| Impressions | impressions | Real-time |
+| Clicks | clicks | Real-time |
+| CTR | ctr | Real-time |
+| Conversions | conversions | Real-time |
+| CPC | average_cpc | Real-time |
+
+4.5 Data Source Priority and Reconciliation
+
+DATA SOURCE HIERARCHY:
+```
+┌─────────────────────────────────────┐
+│ 1. Google Ads API (Live)            │
+│    └── If available: Use for all    │
+│        impressions, clicks, spend   │
+├─────────────────────────────────────┤
+│ 2. PDF Uploads (Override)           │
+│    └── If uploaded: Override spend  │
+│        only, keep other metrics     │
+├─────────────────────────────────────┤
+│ 3. Mock Data (Fallback)             │
+│    └── If API fails: Use mock for   │
+│        all unavailable metrics      │
+└─────────────────────────────────────┘
+```
+
+RECONCILIATION RULES:
+- If user uploads PDF with different spend than API: Use PDF value
+- If API is unavailable: Show last cached value or mock
+- Always display data source badge (Live/PDF/Mock)
+- Log discrepancies between PDF and API for review
+
+CACHING STRATEGY:
+- Cache Google Ads data for 1 hour
+- Refresh on demand with manual refresh button
+- Store last successful fetch in database
 
 5. DATABASE SCHEMA (SUPABASE WITH RLS)
 --------------------------------------
@@ -191,13 +275,26 @@ CREATE TABLE campaigns_spend (
   currency TEXT DEFAULT 'USD',
   date DATE NOT NULL,
   is_verified BOOLEAN DEFAULT false,
+  source TEXT DEFAULT 'pdf', -- 'pdf' or 'google_ads_api'
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Google Ads Cache Table (for API data caching)
+CREATE TABLE google_ads_cache (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  metric_type TEXT NOT NULL,
+  date_range_start DATE NOT NULL,
+  date_range_end DATE NOT NULL,
+  data JSONB NOT NULL,
+  cached_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '1 hour'
 );
 
 -- Row Level Security Policies
 ALTER TABLE pdf_uploads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE campaigns_spend ENABLE ROW LEVEL SECURITY;
+ALTER TABLE google_ads_cache ENABLE ROW LEVEL SECURITY;
 
 -- Users can only see their own uploads
 CREATE POLICY "Users can view own uploads" ON pdf_uploads
@@ -212,6 +309,10 @@ CREATE POLICY "Users can view own spend" ON campaigns_spend
 
 CREATE POLICY "Users can manage own spend" ON campaigns_spend
   FOR ALL USING (auth.uid() = user_id);
+
+-- Google Ads cache is available to all authenticated users (single account MVP)
+CREATE POLICY "Authenticated users can view cache" ON google_ads_cache
+  FOR SELECT USING (auth.uid() IS NOT NULL);
 ----
 
 6. API ENDPOINTS
@@ -232,64 +333,86 @@ POST /api/upload/:id/verify - Verify/correct parsed data
 GET /api/analytics/query - GA4 data (same for all users)
 GET /api/analytics/traffic-sources
 GET /api/analytics/devices
-GET /api/analytics/mock/impressions - Mock data
-GET /api/analytics/mock/clickrate - Mock data
+GET /api/analytics/mock/impressions - Mock data (fallback)
+GET /api/analytics/mock/clickrate - Mock data (fallback)
 
-6.4 Dashboard Endpoints (Protected)
+6.4 Google Ads Endpoints (Protected)
+GET /api/google-ads/campaigns - List all campaigns with metrics
+GET /api/google-ads/spend - Get total spend for date range
+GET /api/google-ads/metrics - Get all metrics (impressions, clicks, CTR)
+POST /api/google-ads/refresh - Force refresh cached data
+
+6.5 Dashboard Endpoints (Protected)
 GET /api/dashboard/metrics - Combined metrics
   IMPLEMENTATION REQUIREMENTS:
   - MUST query GA4 with dimensions: ['sessionDefaultChannelGroup'] only
   - MUST NOT include 'date' dimension to prevent user double-counting
   - MUST filter to paid channels: ['Paid Search', 'Display', 'Paid Video']
   - sumUsers() and sumSessions() MUST use dimensionValues[0] for channel
+  - Include Google Ads data with fallback to mock
 GET /api/dashboard/charts/traffic
 GET /api/dashboard/charts/devices
 GET /api/dashboard/charts/geographic
+GET /api/dashboard/charts/campaigns - Campaign performance from Google Ads
 
-6.5 Spend Endpoints (Protected, User-specific)
-GET /api/spend - Get user's spend data
+6.6 Spend Endpoints (Protected, User-specific)
+GET /api/spend - Get user's spend data (combined sources)
 PUT /api/spend/:id - Update spend entry
 DELETE /api/spend/:id - Delete spend entry
+GET /api/spend/reconcile - Compare API vs PDF data
 
 7. IMPLEMENTATION PHASES
 ------------------------
 
 PHASE 0: Setup & Supabase Auth (Week 1)
-[ ] Configure Supabase project
-[ ] Enable email auth in Supabase
-[ ] Set up RLS policies
-[ ] Create database tables
-[ ] Update package.json scripts
+[x] Configure Supabase project
+[x] Enable email auth in Supabase
+[x] Set up RLS policies
+[x] Create database tables
+[x] Update package.json scripts
 
 PHASE 1: Core Infrastructure (Week 1-2)
 [x] Extract GA4 logic into analytics-core.js
 [x] Refactor MCP server to use core module
-[ ] Set up Express API with Supabase verification
-[ ] Configure Supabase client (frontend & backend)
-[ ] Implement protected routes
+[x] Set up Express API with Supabase verification
+[x] Configure Supabase client (frontend & backend)
+[x] Implement protected routes
 
 PHASE 2: PDF Processing (Week 2)
-[ ] Implement PDF upload endpoint
-[ ] Add PDF parsing logic
-[ ] Store parsed data with user_id
-[ ] Create upload history UI
-[ ] Add verification UI
+[x] Implement PDF upload endpoint
+[x] Add PDF parsing logic
+[x] Store parsed data with user_id
+[x] Create upload history UI
+[x] Add verification UI
 
 PHASE 3: Dashboard Development (Week 3)
-[ ] Build login/signup pages with Supabase
-[ ] Create dashboard with metric cards
-[ ] Add mock data indicators
-[ ] Implement charts
-[ ] Connect to backend API
+[x] Build login/signup pages with Supabase
+[x] Create dashboard with metric cards
+[x] Add mock data indicators
+[x] Implement charts
+[x] Connect to backend API
 
-PHASE 4: Polish & Testing (Week 4)
+PHASE 4: Google Ads Integration (Current)
+[ ] Set up Google Ads API credentials
+[ ] Create Google Ads core module
+[ ] Implement API endpoints for real-time data
+[ ] Update dashboard to use live data
+[ ] Add data source indicators (Live/PDF/Mock)
+[ ] Implement caching strategy
+
+PHASE 5: Polish & Testing (Week 4)
 [ ] Add loading states
 [ ] Implement error handling
 [ ] Test RLS policies
 [ ] Responsive design testing
 [ ] Performance optimization
+[ ] Test Google Ads fallback
 
-PHASE 5: Deployment Preparation
+PHASE 6: Deployment Preparation
+[ ] Configure production environment
+[ ] Set up monitoring
+[ ] Document API
+[ ] Create user guide
 
 8. ENVIRONMENT CONFIGURATION
 ----------------------------
@@ -297,9 +420,20 @@ PHASE 5: Deployment Preparation
 # .env (Backend)
 GA_PROPERTY_ID=your_property_id
 GOOGLE_APPLICATION_CREDENTIALS=./credentials.json
+
+# Google Ads API Configuration (MVP Enhancement)
+GOOGLE_ADS_DEVELOPER_TOKEN=your_developer_token
+GOOGLE_ADS_CLIENT_ID=your_client_id
+GOOGLE_ADS_CLIENT_SECRET=your_client_secret
+GOOGLE_ADS_REFRESH_TOKEN=your_refresh_token
+GOOGLE_ADS_CUSTOMER_ID=your_customer_id
+GOOGLE_ADS_LOGIN_CUSTOMER_ID=your_mcc_id_if_applicable
+
+# Supabase Configuration
 SUPABASE_URL=https://xxxxx.supabase.co
 SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_KEY=your_service_key
+
 API_PORT=5000
 NODE_ENV=development
 
@@ -316,6 +450,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 - Supabase account with project created
 - Google Analytics property with service account
 - GA4 credentials JSON file
+- Google Ads API developer token
+- Google Ads account access
 
 9.2 Installation Steps
 
@@ -324,6 +460,7 @@ npm install express cors dotenv
 npm install @supabase/supabase-js
 npm install multer pdf-parse
 npm install express-rate-limit helmet
+npm install google-ads-api
 npm install --save-dev nodemon concurrently
 
 # Frontend setup
@@ -342,7 +479,8 @@ npm install clsx tailwind-merge
     "dev:web": "cd web && npm run dev",
     "start:api": "node src/api/server.js",
     "start:mcp": "node src/mcp/index.js",
-    "test:connection": "node test-scripts/test-connection.cjs"
+    "test:connection": "node test-scripts/test-connection.cjs",
+    "test:google-ads": "node test-scripts/test-google-ads.cjs"
   }
 }
 
@@ -350,23 +488,28 @@ npm install clsx tailwind-merge
 --------------------------
 
 10.1 Functional Requirements
-[ ] Users can sign up and log in via Supabase
-[ ] Users can upload PDF bills
-[ ] Dashboard shows GA4 metrics (same for all users)
-[ ] Dashboard shows user-specific spend from PDFs
-[ ] Mock data clearly indicated
+[x] Users can sign up and log in via Supabase
+[x] Users can upload PDF bills
+[x] Dashboard shows GA4 metrics (same for all users)
+[ ] Dashboard shows real spend from Google Ads API
+[ ] Dashboard shows real impressions/CTR from Google Ads API
+[ ] Fallback to mock data works when API unavailable
+[ ] Data source badges clearly indicate Live/PDF/Mock
+[ ] PDF uploads can override API data
 [ ] Date range filtering works
-[ ] MCP server remains functional
+[x] MCP server remains functional
 
 10.2 Performance Requirements
 - Dashboard load < 3 seconds
 - PDF processing < 10 seconds
 - API response < 500ms
+- Google Ads data cached for 1 hour
 
 10.3 Security Requirements
 - RLS policies enforce data isolation
 - Tokens expire and refresh properly
 - File uploads validated
+- Google Ads credentials secured
 
 11. FUTURE ENHANCEMENTS (POST-MVP)
 ----------------------------------
@@ -374,19 +517,26 @@ npm install clsx tailwind-merge
 11.1 Multi-Tenant Architecture
 - Store GA4 credentials per organization
 - Isolate GA4 data by tenant
+- Multiple Google Ads accounts (MCC)
+- User-specific Google Ads OAuth connections
 - Team management features
 - Organization settings
 
-11.2 Real Metrics
-- Replace mock impressions with real data
-- Integrate Google Ads API
-- Custom GA4 events
+11.2 Advanced Google Ads Features
+- Historical spend trend analysis
+- Keyword-level performance data
+- Ad group and ad-level metrics
+- Automated bid strategy recommendations
+- Budget pacing analysis
+- Competitor analysis
 
 11.3 Advanced Features
 - Automated report generation
 - Data export capabilities
 - Advanced visualizations
 - AI insights using MCP
+- Custom alerts and notifications
+- API rate limit management
 
 12. DEPENDENCIES
 ----------------
@@ -399,6 +549,7 @@ npm install clsx tailwind-merge
     "dotenv": "^16.0.0",
     "@google-analytics/data": "^4.0.0",
     "@supabase/supabase-js": "^2.39.0",
+    "google-ads-api": "^14.0.0",
     "multer": "^1.4.5",
     "pdf-parse": "^1.1.1",
     "express-rate-limit": "^7.0.0",
@@ -425,7 +576,9 @@ npm install clsx tailwind-merge
 ================================================================================
 END OF DOCUMENT
 
-This PRD focuses on MVP delivery with pure Supabase Auth.
-Multi-tenant architecture is documented as a future enhancement.
-Single GA4 property serves all users with user-specific spend data.
+This PRD includes Google Ads API integration for real-time metrics.
+PDF uploads remain as an override/backup mechanism.
+Data source hierarchy: API → PDF → Mock with clear indicators.
+Single GA4 property and single Google Ads account for MVP.
+Multi-tenant architecture deferred to Phase 2.
 ================================================================================

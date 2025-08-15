@@ -1422,6 +1422,996 @@ DEPLOYMENT CHECKLIST:
 [ ] Error tracking configured
 [ ] Monitoring setup
 
+
+--------------------------------------------------------------------------------
+TASK 4.2: GOOGLE ADS API SETUP AND CREDENTIALS
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+STEPS:
+1. Set up Google Ads API access:
+   - Go to https://developers.google.com/google-ads/api/docs/get-started
+   - Apply for Developer Token (Basic access is fine for single account)
+   - Note: Approval can take 24-48 hours
+
+2. Create OAuth2 credentials:
+   - Go to Google Cloud Console
+   - Create OAuth2 credentials for Desktop app
+   - Download credentials JSON
+
+3. Generate refresh token:
+----
+# Use Google's OAuth playground or create a script
+npx google-ads-api-auth-helper
+----
+
+4. Install Google Ads client library:
+----
+npm install google-ads-api
+----
+
+5. Add to .env:
+----
+# Google Ads API Configuration
+GOOGLE_ADS_DEVELOPER_TOKEN=your_developer_token
+GOOGLE_ADS_CLIENT_ID=your_client_id
+GOOGLE_ADS_CLIENT_SECRET=your_client_secret
+GOOGLE_ADS_REFRESH_TOKEN=your_refresh_token
+GOOGLE_ADS_CUSTOMER_ID=1234567890
+GOOGLE_ADS_LOGIN_CUSTOMER_ID=1234567890  # MCC account if applicable
+----
+
+6. Update Supabase tables for caching:
+----
+-- Run in Supabase SQL Editor
+CREATE TABLE google_ads_cache (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  metric_type TEXT NOT NULL,
+  date_range_start DATE NOT NULL,
+  date_range_end DATE NOT NULL,
+  data JSONB NOT NULL,
+  cached_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '1 hour'
+);
+
+-- Add source column to campaigns_spend
+ALTER TABLE campaigns_spend 
+ADD COLUMN source TEXT DEFAULT 'pdf';
+
+-- Enable RLS for cache table
+ALTER TABLE google_ads_cache ENABLE ROW LEVEL SECURITY;
+
+-- Policy for authenticated users (single account MVP)
+CREATE POLICY "Authenticated users can view cache" 
+ON google_ads_cache FOR SELECT 
+USING (auth.uid() IS NOT NULL);
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Verify environment variables
+Command: node -e "console.log('Token:', process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.slice(0,5) + '...')"
+EXPECT: "Token: [first 5 chars]..."
+
+Check 2: Test API access approval
+Check Google Ads API Center for token status
+EXPECT: Status = "Approved" or "Basic Access"
+
+Check 3: Verify cache table created
+Navigate: Supabase Dashboard → Table Editor
+EXPECT: google_ads_cache table exists
+----
+
+--------------------------------------------------------------------------------
+TASK 4.3: CREATE GOOGLE ADS CORE MODULE
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+CREATE FILE: src/core/ads-core.js
+----
+import { GoogleAdsApi } from 'google-ads-api';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+export class GoogleAdsCore {
+  constructor() {
+    this.client = new GoogleAdsApi({
+      client_id: process.env.GOOGLE_ADS_CLIENT_ID,
+      client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET,
+      developer_token: process.env.GOOGLE_ADS_DEVELOPER_TOKEN
+    });
+    
+    this.customer = this.client.Customer({
+      customer_id: process.env.GOOGLE_ADS_CUSTOMER_ID,
+      login_customer_id: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+      refresh_token: process.env.GOOGLE_ADS_REFRESH_TOKEN
+    });
+  }
+
+  async getCampaignSpend(startDate, endDate) {
+    try {
+      const query = `
+        SELECT 
+          campaign.id,
+          campaign.name,
+          campaign.status,
+          metrics.cost_micros,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          segments.date
+        FROM campaign
+        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        AND campaign.status != 'REMOVED'
+        ORDER BY metrics.cost_micros DESC
+      `;
+      
+      const response = await this.customer.query(query);
+      return this.formatSpendData(response);
+    } catch (error) {
+      console.error('Google Ads API error:', error);
+      throw error;
+    }
+  }
+
+  formatSpendData(response) {
+    const campaigns = response.map(row => ({
+      id: row.campaign.id,
+      name: row.campaign.name,
+      spend: row.metrics.cost_micros / 1000000, // Convert micros to currency
+      impressions: row.metrics.impressions,
+      clicks: row.metrics.clicks,
+      conversions: row.metrics.conversions,
+      date: row.segments.date
+    }));
+
+    const totalSpend = campaigns.reduce((sum, c) => sum + c.spend, 0);
+    
+    return {
+      totalSpend,
+      campaigns,
+      currency: 'USD'
+    };
+  }
+
+  async getTotalSpend(startDate, endDate) {
+    const data = await this.getCampaignSpend(startDate, endDate);
+    return data.totalSpend;
+  }
+
+  async getAdsMetrics(startDate, endDate) {
+    const query = `
+      SELECT 
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions,
+        metrics.ctr,
+        metrics.average_cpc
+      FROM customer
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    `;
+    
+    const response = await this.customer.query(query);
+    
+    return {
+      impressions: response[0]?.metrics.impressions || 0,
+      clicks: response[0]?.metrics.clicks || 0,
+      ctr: response[0]?.metrics.ctr || 0,
+      spend: (response[0]?.metrics.cost_micros || 0) / 1000000,
+      conversions: response[0]?.metrics.conversions || 0,
+      avgCpc: (response[0]?.metrics.average_cpc || 0) / 1000000
+    };
+  }
+}
+
+export default GoogleAdsCore;
+----
+
+CREATE TEST FILE: test-scripts/test-google-ads.cjs
+----
+require('dotenv').config({ path: '../.env' });
+
+async function testGoogleAds() {
+  try {
+    // Dynamic import for ES module
+    const { GoogleAdsCore } = await import('../src/core/ads-core.js');
+    
+    const adsCore = new GoogleAdsCore();
+    
+    // Test date range (last 7 days)
+    const endDate = new Date().toISOString().split('T')[0];
+    const startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      .toISOString().split('T')[0];
+    
+    console.log('Testing Google Ads API...');
+    console.log('Date range:', startDate, 'to', endDate);
+    
+    const spendData = await adsCore.getCampaignSpend(startDate, endDate);
+    
+    console.log('Total Spend: $', spendData.totalSpend.toFixed(2));
+    console.log('Campaigns found:', spendData.campaigns.length);
+    
+    spendData.campaigns.forEach(campaign => {
+      console.log(`- ${campaign.name}: $${campaign.spend.toFixed(2)}`);
+    });
+    
+  } catch (error) {
+    console.error('Test failed:', error.message);
+  }
+}
+
+testGoogleAds();
+----
+
+ADD TO package.json scripts:
+----
+"test:google-ads": "node test-scripts/test-google-ads.cjs"
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Test core module
+Command: npm run test:google-ads
+EXPECT: List of campaigns with spend amounts
+
+Check 2: Verify data format
+EXPECT: totalSpend as number, campaigns as array
+
+Check 3: Test metrics retrieval
+Modify test script to call getAdsMetrics
+EXPECT: impressions, clicks, CTR returned
+----
+
+--------------------------------------------------------------------------------
+TASK 4.4: UPDATE DASHBOARD API ENDPOINT FOR REAL SPEND
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+UPDATE FILE: src/api/routes/dashboard.js
+
+Add new endpoint for Google Ads spend:
+----
+import { GoogleAdsCore } from '../../core/ads-core.js';
+import { supabaseAdmin } from '../../db/supabase-client.js';
+
+const adsCore = new GoogleAdsCore();
+
+// Add caching helper
+async function getCachedOrFetch(metricType, startDate, endDate, fetchFn) {
+  // Check cache first
+  const { data: cached } = await supabaseAdmin
+    .from('google_ads_cache')
+    .select('data')
+    .eq('metric_type', metricType)
+    .eq('date_range_start', startDate)
+    .eq('date_range_end', endDate)
+    .gte('expires_at', new Date().toISOString())
+    .single();
+
+  if (cached) {
+    return cached.data;
+  }
+
+  // Fetch fresh data
+  const freshData = await fetchFn();
+  
+  // Store in cache
+  await supabaseAdmin
+    .from('google_ads_cache')
+    .upsert({
+      metric_type: metricType,
+      date_range_start: startDate,
+      date_range_end: endDate,
+      data: freshData,
+      cached_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hour
+    });
+
+  return freshData;
+}
+
+// Add new route for real spend data
+router.get('/spend/google-ads', authenticateRequest, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({ 
+        error: 'Start date and end date required' 
+      });
+    }
+    
+    const spendData = await getCachedOrFetch(
+      'campaign_spend',
+      startDate,
+      endDate,
+      () => adsCore.getCampaignSpend(startDate, endDate)
+    );
+    
+    res.json({
+      totalSpend: spendData.totalSpend,
+      campaigns: spendData.campaigns,
+      currency: spendData.currency,
+      source: 'google_ads_api',
+      lastUpdated: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Google Ads API error:', error);
+    
+    // Fallback to mock data if API fails
+    res.json({
+      totalSpend: 2992,
+      campaigns: [],
+      currency: 'USD',
+      source: 'mock_data',
+      error: 'Google Ads API unavailable, showing mock data'
+    });
+  }
+});
+
+// Add route for ads metrics (impressions, clicks, CTR)
+router.get('/ads-metrics', authenticateRequest, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    const metrics = await getCachedOrFetch(
+      'ads_metrics',
+      startDate,
+      endDate,
+      () => adsCore.getAdsMetrics(startDate, endDate)
+    );
+    
+    res.json({
+      ...metrics,
+      source: 'google_ads_api'
+    });
+    
+  } catch (error) {
+    console.error('Google Ads metrics error:', error);
+    
+    // Fallback to mock
+    const impressions = Math.floor(Math.random() * 40000) + 10000;
+    const clicks = Math.floor(impressions * 0.03);
+    
+    res.json({
+      impressions,
+      clicks,
+      ctr: 3.0,
+      source: 'mock_data'
+    });
+  }
+});
+
+// Update main metrics endpoint to use Google Ads
+router.get('/metrics', authenticateRequest, async (req, res) => {
+  const { startDate, endDate } = req.query;
+  const userId = req.user.id;
+  
+  try {
+    // Get GA4 data (existing code)
+    const ga4Data = await analyticsCore.queryAnalytics({
+      dimensions: ['sessionDefaultChannelGroup'],
+      metrics: ['sessions', 'totalUsers', 'bounceRate'],
+      startDate,
+      endDate
+    });
+    
+    // Get Google Ads data
+    let adsData;
+    try {
+      adsData = await getCachedOrFetch(
+        'ads_complete',
+        startDate,
+        endDate,
+        async () => {
+          const [spend, metrics] = await Promise.all([
+            adsCore.getCampaignSpend(startDate, endDate),
+            adsCore.getAdsMetrics(startDate, endDate)
+          ]);
+          return { ...spend, ...metrics };
+        }
+      );
+    } catch (adsError) {
+      console.error('Google Ads error, using mock:', adsError);
+      // Use mock data as fallback
+      adsData = {
+        totalSpend: 2992,
+        impressions: Math.floor(Math.random() * 40000) + 10000,
+        ctr: (Math.random() * 3 + 2).toFixed(2),
+        source: 'mock_data'
+      };
+    }
+    
+    res.json({
+      totalCampaigns: extractCampaignCount(ga4Data),
+      totalImpressions: adsData.impressions,
+      clickRate: adsData.ctr,
+      totalSessions: sumSessions(ga4Data),
+      totalUsers: sumUsers(ga4Data),
+      avgBounceRate: calculateBounceRate(ga4Data),
+      conversions: adsData.conversions || extractConversions(ga4Data),
+      totalSpend: adsData.totalSpend,
+      dataSource: adsData.source || 'google_ads_api',
+      mockDataFields: adsData.source === 'mock_data' ? 
+        ['totalImpressions', 'clickRate', 'totalSpend'] : []
+    });
+  } catch (error) {
+    console.error('Dashboard metrics error:', error);
+    res.status(500).json({ error: 'Failed to fetch metrics' });
+  }
+});
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Test spend endpoint
+Command: curl "http://localhost:5000/api/dashboard/spend/google-ads?startDate=2025-08-01&endDate=2025-08-14" -H "Authorization: Bearer [token]"
+EXPECT: JSON with totalSpend and campaigns
+
+Check 2: Test metrics endpoint
+Command: curl "http://localhost:5000/api/dashboard/ads-metrics?startDate=2025-08-01&endDate=2025-08-14" -H "Authorization: Bearer [token]"
+EXPECT: impressions, clicks, ctr from Google Ads
+
+Check 3: Test error handling
+Remove API credentials temporarily and test
+EXPECT: Fallback to mock data with error message
+
+Check 4: Test caching
+Make same request twice within 1 hour
+EXPECT: Second request returns instantly from cache
+----
+
+--------------------------------------------------------------------------------
+TASK 4.5: UPDATE FRONTEND TO USE REAL SPEND DATA
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+UPDATE FILE: web/app/dashboard/page.tsx
+
+Replace mock spend data with API call:
+----
+// Add to your dashboard component
+const [spendData, setSpendData] = useState({ 
+  total: 0, 
+  source: 'loading',
+  campaigns: []
+});
+
+const [adsMetrics, setAdsMetrics] = useState({
+  impressions: 0,
+  clicks: 0,
+  ctr: 0,
+  source: 'loading'
+});
+
+// Update fetchAllData function
+const fetchAllData = useCallback(async () => {
+  if (!user) return
+  
+  setLoadingData(true)
+  setError(null)
+  
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    const headers = {
+      'Authorization': `Bearer ${session?.access_token}`
+    }
+    
+    const startStr = dateRange.startDate.toISOString().split('T')[0]
+    const endStr = dateRange.endDate.toISOString().split('T')[0]
+    
+    // Fetch all data in parallel
+    const [metricsRes, spendRes, adsRes, trafficRes, devicesRes, geoRes, campaignsRes] = 
+      await Promise.all([
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/spend/google-ads?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/ads-metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/traffic?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/devices?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/geographic?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/campaigns?startDate=${startStr}&endDate=${endStr}`, { headers })
+      ])
+    
+    const metricsData = await metricsRes.json()
+    const spendData = await spendRes.json()
+    const adsData = await adsRes.json()
+    
+    setMetrics(metricsData)
+    setSpendData({
+      total: spendData.totalSpend,
+      source: spendData.source,
+      campaigns: spendData.campaigns
+    })
+    setAdsMetrics({
+      impressions: adsData.impressions,
+      clicks: adsData.clicks,
+      ctr: adsData.ctr,
+      source: adsData.source
+    })
+    
+    setCharts({
+      traffic: await trafficRes.json(),
+      devices: await devicesRes.json(),
+      geographic: await geoRes.json(),
+      campaigns: spendData.campaigns || await campaignsRes.json()
+    })
+    
+    setLastUpdated(new Date())
+  } catch (err) {
+    setError('Failed to load dashboard data')
+    console.error(err)
+  } finally {
+    setLoadingData(false)
+  }
+}, [user, dateRange])
+
+// Update the metric cards to use real data
+<MetricCard
+  title="Total Spend"
+  value={`$${spendData.total.toFixed(2)} USD`}
+  description="Your advertising spend from Google Ads"
+  badge={spendData.source === 'mock_data' ? 'Mock Data' : 'Live Data'}
+  badgeColor={spendData.source === 'mock_data' ? 'orange' : 'green'}
+  icon="dollar-sign"
+  color="gray"
+/>
+
+<MetricCard
+  title="Total Impressions"
+  value={adsMetrics.impressions.toLocaleString()}
+  description="Ad views from Google Ads"
+  badge={adsMetrics.source === 'mock_data' ? 'Mock Data' : 'Live Data'}
+  badgeColor={adsMetrics.source === 'mock_data' ? 'orange' : 'green'}
+  icon="eye"
+  color="green"
+/>
+
+<MetricCard
+  title="Click Rate"
+  value={`${adsMetrics.ctr.toFixed(2)}%`}
+  description="Click-through rate from Google Ads"
+  badge={adsMetrics.source === 'mock_data' ? 'Mock Data' : 'Live Data'}
+  badgeColor={adsMetrics.source === 'mock_data' ? 'orange' : 'green'}
+  icon="mouse-pointer"
+  color="purple"
+/>
+----
+
+UPDATE: Campaign Performance Chart to use real data
+----
+// Update CampaignChart component
+const campaignChartData = spendData.campaigns?.length > 0 
+  ? spendData.campaigns.map(campaign => ({
+      name: campaign.name,
+      value: campaign.spend,
+      impressions: campaign.impressions,
+      clicks: campaign.clicks
+    }))
+  : mockCampaignData;
+
+// Pass to chart
+<CampaignChart 
+  data={campaignChartData} 
+  isLiveData={spendData.source === 'google_ads_api'}
+/>
+----
+
+UPDATE: Add refresh button for Google Ads data
+----
+// Add manual refresh capability
+<button
+  onClick={async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/google-ads/refresh`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`
+        }
+      }
+    )
+    fetchAllData()
+  }}
+  className="p-2 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+  title="Refresh Google Ads data"
+>
+  <RefreshIcon className="h-5 w-5" />
+</button>
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Verify spend updates
+Change date range in UI
+EXPECT: Spend value changes based on date range
+
+Check 2: Check badge indicators
+EXPECT: "Live Data" badge when API works, "Mock Data" on fallback
+
+Check 3: Campaign chart with real data
+EXPECT: Real campaign names and spend in chart
+
+Check 4: Impressions and CTR from Google Ads
+EXPECT: Real values replacing mock data
+
+Check 5: Test fallback
+Temporarily break Google Ads credentials
+EXPECT: Dashboard still works with mock data and orange badges
+----
+
+--------------------------------------------------------------------------------
+TASK 4.6: ADD DATA SOURCE RECONCILIATION
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+CREATE: Data reconciliation view for PDF vs API data
+
+UPDATE FILE: web/app/uploads/page.tsx
+----
+// Add comparison view
+export default function UploadsPage() {
+  const [uploads, setUploads] = useState([])
+  const [apiSpend, setApiSpend] = useState(null)
+  const [comparison, setComparison] = useState(null)
+  
+  useEffect(() => {
+    fetchComparison()
+  }, [])
+  
+  const fetchComparison = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    const headers = {
+      'Authorization': `Bearer ${session?.access_token}`
+    }
+    
+    // Get both PDF and API data
+    const [uploadsRes, apiRes] = await Promise.all([
+      fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload/history`, { headers }),
+      fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/spend/google-ads?startDate=${startDate}&endDate=${endDate}`, { headers })
+    ])
+    
+    const uploadsData = await uploadsRes.json()
+    const apiData = await apiRes.json()
+    
+    setUploads(uploadsData)
+    setApiSpend(apiData)
+    
+    // Calculate differences
+    const pdfTotal = uploadsData.reduce((sum, u) => sum + u.spend_amount, 0)
+    const apiTotal = apiData.totalSpend
+    const difference = pdfTotal - apiTotal
+    const percentDiff = ((difference / apiTotal) * 100).toFixed(2)
+    
+    setComparison({
+      pdfTotal,
+      apiTotal,
+      difference,
+      percentDiff,
+      recommendation: Math.abs(percentDiff) > 5 
+        ? 'Significant difference detected. Consider reviewing your billing.'
+        : 'Data sources are aligned.'
+    })
+  }
+  
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <h1 className="text-3xl font-bold mb-8">Spend Data Management</h1>
+      
+      {/* Data Source Comparison Card */}
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <h2 className="text-xl font-semibold mb-4">Data Source Comparison</h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="text-center">
+            <p className="text-sm text-gray-500">PDF Uploads</p>
+            <p className="text-2xl font-bold">${comparison?.pdfTotal.toFixed(2)}</p>
+          </div>
+          
+          <div className="text-center">
+            <p className="text-sm text-gray-500">Google Ads API</p>
+            <p className="text-2xl font-bold">${comparison?.apiTotal.toFixed(2)}</p>
+          </div>
+          
+          <div className="text-center">
+            <p className="text-sm text-gray-500">Difference</p>
+            <p className={`text-2xl font-bold ${
+              Math.abs(comparison?.percentDiff) > 5 ? 'text-red-600' : 'text-green-600'
+            }`}>
+              {comparison?.percentDiff}%
+            </p>
+          </div>
+        </div>
+        
+        {comparison?.recommendation && (
+          <div className={`mt-4 p-3 rounded ${
+            Math.abs(comparison?.percentDiff) > 5 
+              ? 'bg-yellow-50 text-yellow-800' 
+              : 'bg-green-50 text-green-800'
+          }`}>
+            {comparison.recommendation}
+          </div>
+        )}
+        
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={() => {
+              // Use PDF data as primary source
+              localStorage.setItem('preferredDataSource', 'pdf')
+              window.location.href = '/dashboard'
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Use PDF Data
+          </button>
+          
+          <button
+            onClick={() => {
+              // Use API data as primary source
+              localStorage.setItem('preferredDataSource', 'api')
+              window.location.href = '/dashboard'
+            }}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          >
+            Use API Data
+          </button>
+        </div>
+      </div>
+      
+      {/* Existing upload component */}
+      <FileUpload />
+      
+      {/* Upload history table */}
+      <UploadHistory uploads={uploads} />
+    </div>
+  )
+}
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Comparison view renders
+Navigate: http://localhost:3000/uploads
+EXPECT: See comparison card with both data sources
+
+Check 2: Difference calculation
+Upload PDF with different spend than API
+EXPECT: Percentage difference shown, recommendation appears
+
+Check 3: Data source preference
+Click "Use PDF Data"
+EXPECT: Dashboard uses PDF data as primary source
+
+Check 4: Warning for discrepancies
+Have >5% difference
+EXPECT: Yellow warning with recommendation
+----
+
+--------------------------------------------------------------------------------
+TASK 4.7: ADD CONFIGURATION UI FOR GOOGLE ADS CONNECTION (OPTIONAL)
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+
+CREATE: Settings page for Google Ads connection
+
+CREATE FILE: web/app/settings/page.tsx
+----
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useAuth } from '@/components/AuthProvider'
+import { supabase } from '@/lib/supabase'
+
+export default function SettingsPage() {
+  const { user } = useAuth()
+  const [connectionStatus, setConnectionStatus] = useState('checking')
+  const [lastSync, setLastSync] = useState(null)
+  const [accounts, setAccounts] = useState([])
+  
+  useEffect(() => {
+    checkConnection()
+  }, [])
+  
+  const checkConnection = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/api/google-ads/status`,
+      {
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`
+        }
+      }
+    )
+    
+    const status = await response.json()
+    setConnectionStatus(status.connected ? 'connected' : 'disconnected')
+    setLastSync(status.lastSync)
+    setAccounts(status.accounts || [])
+  }
+  
+  const initiateOAuth = async () => {
+    // In production, this would redirect to Google OAuth
+    window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/api/google-ads/oauth/initiate`
+  }
+  
+  const disconnectAccount = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/api/google-ads/disconnect`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`
+        }
+      }
+    )
+    
+    setConnectionStatus('disconnected')
+  }
+  
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <h1 className="text-3xl font-bold mb-8">Settings</h1>
+      
+      {/* Google Ads Connection */}
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <h2 className="text-xl font-semibold mb-4">Google Ads Connection</h2>
+        
+        <div className="space-y-4">
+          {/* Connection Status */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Connection Status</p>
+              <p className="text-sm text-gray-500">
+                {connectionStatus === 'connected' 
+                  ? `Connected to ${accounts.length} account(s)`
+                  : 'Not connected'
+                }
+              </p>
+            </div>
+            
+            <div className={`px-3 py-1 rounded-full text-sm ${
+              connectionStatus === 'connected'
+                ? 'bg-green-100 text-green-800'
+                : 'bg-gray-100 text-gray-800'
+            }`}>
+              {connectionStatus === 'connected' ? 'Active' : 'Inactive'}
+            </div>
+          </div>
+          
+          {/* Last Sync */}
+          {lastSync && (
+            <div>
+              <p className="font-medium">Last Data Sync</p>
+              <p className="text-sm text-gray-500">
+                {new Date(lastSync).toLocaleString()}
+              </p>
+            </div>
+          )}
+          
+          {/* Connected Accounts */}
+          {accounts.length > 0 && (
+            <div>
+              <p className="font-medium mb-2">Connected Accounts</p>
+              <div className="space-y-2">
+                {accounts.map(account => (
+                  <div key={account.id} className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                    <div>
+                      <p className="font-medium">{account.name}</p>
+                      <p className="text-sm text-gray-500">ID: {account.id}</p>
+                    </div>
+                    <button
+                      onClick={() => selectAccount(account.id)}
+                      className="text-blue-600 hover:text-blue-700"
+                    >
+                      Select
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Action Buttons */}
+          <div className="flex gap-2 pt-4">
+            {connectionStatus === 'connected' ? (
+              <>
+                <button
+                  onClick={disconnectAccount}
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Disconnect
+                </button>
+                <button
+                  onClick={checkConnection}
+                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+                >
+                  Refresh Status
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={initiateOAuth}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Connect Google Ads Account
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      
+      {/* Data Preferences */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold mb-4">Data Preferences</h2>
+        
+        <div className="space-y-4">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              className="mr-3"
+              checked={localStorage.getItem('autoRefresh') === 'true'}
+              onChange={(e) => {
+                localStorage.setItem('autoRefresh', e.target.checked)
+              }}
+            />
+            <div>
+              <p className="font-medium">Auto-refresh data</p>
+              <p className="text-sm text-gray-500">
+                Automatically refresh Google Ads data every hour
+              </p>
+            </div>
+          </label>
+          
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              className="mr-3"
+              checked={localStorage.getItem('preferPdfData') === 'true'}
+              onChange={(e) => {
+                localStorage.setItem('preferPdfData', e.target.checked)
+              }}
+            />
+            <div>
+              <p className="font-medium">Prefer PDF data</p>
+              <p className="text-sm text-gray-500">
+                Use uploaded PDF data when available, even if API data exists
+              </p>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+  )
+}
+----
+
+Note: This is optional for MVP. You can hardcode credentials initially
+and add user-specific connections in Phase 2.
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Settings page renders
+Navigate: http://localhost:3000/settings
+EXPECT: See Google Ads connection section
+
+Check 2: Connection status displays
+EXPECT: Shows connected/disconnected based on API
+
+Check 3: Preferences save
+Toggle auto-refresh
+EXPECT: Setting persists in localStorage
+
+Check 4: OAuth flow (if implemented)
+Click "Connect Google Ads Account"
+EXPECT: Redirects to Google OAuth
+----
+
 ================================================================================
 TESTING CHECKLIST
 ================================================================================

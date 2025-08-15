@@ -1,8 +1,45 @@
 import express from 'express';
 import { supabaseAdmin } from '../../db/supabase-client.js';
 import { verifySupabaseToken } from '../middleware/auth.js';
+import { GoogleAdsCore } from '../../core/ads-core.js';
 
 const router = express.Router();
+
+const adsCore = new GoogleAdsCore();
+
+// Add caching helper
+async function getCachedOrFetch(metricType, startDate, endDate, fetchFn) {
+  // Check cache first
+  const { data: cached } = await supabaseAdmin
+    .from('google_ads_cache')
+    .select('data')
+    .eq('metric_type', metricType)
+    .eq('date_range_start', startDate)
+    .eq('date_range_end', endDate)
+    .gte('expires_at', new Date().toISOString())
+    .single();
+
+  if (cached) {
+    return cached.data;
+  }
+
+  // Fetch fresh data
+  const freshData = await fetchFn();
+  
+  // Store in cache
+  await supabaseAdmin
+    .from('google_ads_cache')
+    .upsert({
+      metric_type: metricType,
+      date_range_start: startDate,
+      date_range_end: endDate,
+      data: freshData,
+      cached_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hour
+    });
+
+  return freshData;
+}
 
 // Helper functions to process GA4 data
 const extractCampaignCount = async (analyticsCore, startDate, endDate) => {
@@ -128,12 +165,85 @@ const extractConversions = (ga4Data) => {
   return Math.floor(sessions * conversionRate);
 };
 
-// GET /api/dashboard/metrics - Aggregated dashboard data
-router.get('/metrics', verifySupabaseToken, async (req, res) => {
+// Add new route for real spend data
+router.get('/spend/google-ads', verifySupabaseToken, async (req, res) => {
   try {
-    const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;
-    const userId = req.user.id;
+    const { startDate, endDate } = req.query;
     
+    if (!startDate || !endDate) {
+      return res.status(400).json({ 
+        error: 'Start date and end date required' 
+      });
+    }
+    
+    const spendData = await getCachedOrFetch(
+      'campaign_spend',
+      startDate,
+      endDate,
+      () => adsCore.getCampaignSpend(startDate, endDate)
+    );
+    
+    res.json({
+      totalSpend: spendData.totalSpend,
+      campaigns: spendData.campaigns,
+      currency: spendData.currency,
+      source: 'google_ads_api',
+      lastUpdated: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Google Ads API error:', error);
+    
+    // Fallback to mock data if API fails
+    res.json({
+      totalSpend: 2992,
+      campaigns: [],
+      currency: 'USD',
+      source: 'mock_data',
+      error: 'Google Ads API unavailable, showing mock data'
+    });
+  }
+});
+
+// Add route for ads metrics (impressions, clicks, CTR)
+router.get('/ads-metrics', verifySupabaseToken, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    const metrics = await getCachedOrFetch(
+      'ads_metrics',
+      startDate,
+      endDate,
+      () => adsCore.getAdsMetrics(startDate, endDate)
+    );
+    
+    res.json({
+      ...metrics,
+      source: 'google_ads_api'
+    });
+    
+  } catch (error) {
+    console.error('Google Ads metrics error:', error);
+    
+    // Fallback to mock
+    const impressions = Math.floor(Math.random() * 40000) + 10000;
+    const clicks = Math.floor(impressions * 0.03);
+    
+    res.json({
+      impressions,
+      clicks,
+      ctr: 3.0,
+      source: 'mock_data'
+    });
+  }
+});
+
+// Update main metrics endpoint to use Google Ads
+router.get('/metrics', verifySupabaseToken, async (req, res) => {
+  const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;
+  const userId = req.user.id;
+  
+  try {
     // Validate date format
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
@@ -143,23 +253,16 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       });
     }
     
-    // Get GA4 data (same for all users in MVP)
+    // Get GA4 data (existing code)
     let ga4Data = null;
     let ga4Error = null;
     let analyticsCore = null;
     
     try {
-      // Import analytics core dynamically to avoid startup issues
       const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
       analyticsCore = new GoogleAnalyticsCore();
-      
-      // Initialize and query GA4 data with channel group filtering for paid traffic
       await analyticsCore.initialize();
       
-      // Query by sessionDefaultChannelGroup to get exact paid traffic categories
-      // This properly captures Paid Search, Display, and Paid Video traffic
-      // Note: We don't include 'date' dimension for totalUsers to avoid double-counting
-      // users who visit on multiple days
       ga4Data = await analyticsCore.queryAnalytics({
         dimensions: ['sessionDefaultChannelGroup'],
         metrics: ['sessions', 'totalUsers', 'bounceRate'],
@@ -174,89 +277,74 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
           }
         }
       });
-      
     } catch (error) {
-      console.error('GA4 query error in dashboard:', error);
+      console.error('GA4 query error:', error);
       ga4Error = error.message;
-      // Continue with mock data if GA4 fails
     }
     
-    // Get user's spend from database
-    const { data: spendData, error: spendError } = await supabaseAdmin
-      .from('campaigns_spend')
-      .select('spend_amount')
-      .eq('user_id', userId)
-      .gte('date', startDate)
-      .lte('date', endDate);
-      
-    if (spendError) {
-      console.error('Error fetching spend data:', spendError);
+    // Get Google Ads data
+    let adsData;
+    try {
+      adsData = await getCachedOrFetch(
+        'ads_complete',
+        startDate,
+        endDate,
+        async () => {
+          const [spend, metrics] = await Promise.all([
+            adsCore.getCampaignSpend(startDate, endDate),
+            adsCore.getAdsMetrics(startDate, endDate)
+          ]);
+          return { ...spend, ...metrics };
+        }
+      );
+    } catch (adsError) {
+      console.error('Google Ads error, using mock:', adsError);
+      // Use mock data as fallback
+      adsData = {
+        totalSpend: 2992,
+        impressions: Math.floor(Math.random() * 40000) + 10000,
+        ctr: (Math.random() * 3 + 2).toFixed(2),
+        source: 'mock_data'
+      };
     }
-    
-    // Generate mock data for all mock fields
-    const impressions = Math.floor(Math.random() * 40000) + 10000; // 10K-50K
-    const clickRate = (Math.random() * 3 + 2).toFixed(2); // 2-5%
-    const totalSpend = Math.floor(Math.random() * 5000) + 1000; // $1K-$6K mock spend
     
     // Process GA4 data or use fallback values
     const totalSessions = ga4Data ? sumSessions(ga4Data) : Math.floor(Math.random() * 2000) + 500;
     const totalUsers = ga4Data ? sumUsers(ga4Data) : Math.floor(Math.random() * 1500) + 300;
     const avgBounceRate = ga4Data ? calculateBounceRate(ga4Data) : (Math.random() * 30 + 30).toFixed(2);
-    const conversions = ga4Data ? extractConversions(ga4Data) : Math.floor(Math.random() * 50) + 20;
+    const conversions = adsData.conversions || (ga4Data ? extractConversions(ga4Data) : Math.floor(Math.random() * 50) + 20);
     
     // Get real campaign count from GA4 or use fallback
-    let totalCampaigns = Math.floor(Math.random() * 5) + 1; // Default fallback
+    let totalCampaigns = Math.floor(Math.random() * 5) + 1;
     if (analyticsCore && ga4Data) {
       try {
         totalCampaigns = await extractCampaignCount(analyticsCore, startDate, endDate);
-        console.log(`🎯 Campaign count from GA4: ${totalCampaigns}`);
       } catch (error) {
         console.error('Error getting campaign count:', error);
-        // Keep the fallback value
       }
-    } else {
-      console.log('⚠️ Using fallback campaign count (analyticsCore not available)');
     }
     
-    console.log(`📊 Final calculated values: Sessions=${totalSessions}, Users=${totalUsers}, BounceRate=${avgBounceRate}%, Conversions=${conversions}, Campaigns=${totalCampaigns}`);
-    
-    const responseData = {
+    res.json({
       totalCampaigns,
-      totalImpressions: impressions,
-      clickRate: parseFloat(clickRate),
+      totalImpressions: adsData.impressions,
+      clickRate: adsData.ctr,
       totalSessions,
       totalUsers,
       avgBounceRate: parseFloat(avgBounceRate),
       conversions,
-      totalSpend: totalSpend,
-      mockDataFields: ['totalImpressions', 'clickRate', 'totalSpend'],
+      totalSpend: adsData.totalSpend,
+      dataSource: adsData.source || 'google_ads_api',
+      mockDataFields: adsData.source === 'mock_data' ? 
+        ['totalImpressions', 'clickRate', 'totalSpend'] : [],
       metadata: {
         dateRange: { startDate, endDate },
-        dataSource: {
-          ga4: ga4Data ? 'success' : 'fallback',
-          spend: spendError ? 'error' : 'success',
-          ga4Error: ga4Error || null
-        },
         user: req.user.email,
         timestamp: new Date().toISOString()
       }
-    };
-    
-    // Add warning if GA4 failed
-    if (ga4Error) {
-      responseData.warnings = [
-        'GA4 data unavailable, using fallback values for sessions, users, bounce rate, and conversions'
-      ];
-    }
-    
-    res.json(responseData);
-    
+    });
   } catch (error) {
     console.error('Dashboard metrics error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch dashboard metrics',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    res.status(500).json({ error: 'Failed to fetch metrics' });
   }
 });
 
