@@ -388,7 +388,7 @@ export default function Dashboard() {
             
             <MetricCard
               title="Click Rate"
-              value={adsMetrics.ctr || metrics.clickRate}
+              value={(adsMetrics.ctr || metrics.clickRate) * 100}
               unit="%"
               isMockData={adsMetrics.source === 'mock_data' || metrics.mockDataFields?.includes('clickRate') || false}
               description={`CTR from ${adsMetrics.source === 'google_ads_api' ? 'Google Ads' : 'mock data'}`}
@@ -421,7 +421,7 @@ export default function Dashboard() {
             
             <MetricCard
               title="Total Spend"
-              value={spendData.total || metrics.totalSpend}
+              value={parseFloat(spendData.total || metrics.totalSpend).toFixed(2)}
               unit={metrics?.currency?.display || spendData.currency || "SGD"}
               description={
                 <div className="space-y-1">

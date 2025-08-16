@@ -392,13 +392,13 @@ PHASE 3: Dashboard Development (Week 3)
 [x] Implement charts
 [x] Connect to backend API
 
-PHASE 4: Google Ads Integration (Current)
-[ ] Set up Google Ads API credentials
-[ ] Create Google Ads core module
-[ ] Implement API endpoints for real-time data
-[ ] Update dashboard to use live data
-[ ] Add data source indicators (Live/PDF/Mock)
-[ ] Implement caching strategy
+PHASE 4: Google Ads Integration (Completed)
+[x] Set up Google Ads API credentials
+[x] Create Google Ads core module
+[x] Implement API endpoints for real-time data
+[x] Update dashboard to use live data
+[x] Add data source indicators (Live/PDF/Mock)
+[x] Implement caching strategy
 
 PHASE 5: Polish & Testing (Week 4)
 [ ] Add loading states
@@ -491,12 +491,12 @@ npm install clsx tailwind-merge
 [x] Users can sign up and log in via Supabase
 [x] Users can upload PDF bills
 [x] Dashboard shows GA4 metrics (same for all users)
-[ ] Dashboard shows real spend from Google Ads API
-[ ] Dashboard shows real impressions/CTR from Google Ads API
-[ ] Fallback to mock data works when API unavailable
-[ ] Data source badges clearly indicate Live/PDF/Mock
-[ ] PDF uploads can override API data
-[ ] Date range filtering works
+[x] Dashboard shows real spend from Google Ads API
+[x] Dashboard shows real impressions/CTR from Google Ads API
+[x] Fallback to mock data works when API unavailable
+[x] Data source badges clearly indicate Live/PDF/Mock
+[x] PDF uploads can override API data
+[x] Date range filtering works
 [x] MCP server remains functional
 
 10.2 Performance Requirements

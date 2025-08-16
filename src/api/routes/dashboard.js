@@ -222,14 +222,52 @@ const getCampaignBounceRate = async (analyticsCore, startDate, endDate) => {
   }
 };
 
-const extractConversions = (ga4Data) => {
-  // For MVP, we'll use mock conversion data
-  // In real implementation, this would come from GA4 conversion events
-  const sessions = sumSessions(ga4Data);
-  
-  // Mock conversion rate of ~2-4% of sessions
-  const conversionRate = 0.02 + (Math.random() * 0.02); // 2-4%
-  return Math.floor(sessions * conversionRate);
+// Get real conversions from GA4 for paid campaigns only
+const extractConversions = async (analyticsCore, startDate, endDate) => {
+  try {
+    console.log('📊 Getting real GA4 conversions for paid campaigns...');
+    
+    // Query GA4 for conversions from paid campaigns only
+    const conversionData = await analyticsCore.queryAnalytics({
+      dimensions: ['sessionCampaignName', 'sessionDefaultChannelGroup'],
+      metrics: ['conversions'],
+      startDate,
+      endDate,
+      dimensionFilter: {
+        filter: {
+          fieldName: 'sessionDefaultChannelGroup',
+          inListFilter: {
+            values: ['Paid Search', 'Display', 'Paid Video']
+          }
+        }
+      }
+    });
+    
+    if (!conversionData || !conversionData.rows) {
+      console.log('No conversion data found, returning 0');
+      return 0;
+    }
+    
+    let totalConversions = 0;
+    conversionData.rows.forEach(row => {
+      const campaignName = row.dimensionValues[0]?.value;
+      const conversions = parseFloat(row.metricValues[0]?.value || 0);
+      
+      // Only count real campaigns - exclude GA4 placeholder values
+      const excludedValues = ['(not set)', '(referral)', '(direct)', '(organic)', '(none)', '(cross-network)'];
+      if (campaignName && !excludedValues.includes(campaignName) && conversions > 0) {
+        console.log(`  Campaign: ${campaignName} - Conversions: ${conversions}`);
+        totalConversions += conversions;
+      }
+    });
+    
+    console.log(`📈 Total paid campaign conversions: ${totalConversions}`);
+    return Math.round(totalConversions);
+    
+  } catch (error) {
+    console.error('Error fetching GA4 conversions:', error);
+    return 0;
+  }
 };
 
 // Add new route for real spend data with currency conversion
@@ -439,7 +477,16 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
     // Process GA4 data or use fallback values
     const totalSessions = ga4Data ? sumSessions(ga4Data) : Math.floor(Math.random() * 2000) + 500;
     const totalUsers = ga4Data ? sumUsers(ga4Data) : Math.floor(Math.random() * 1500) + 300;
-    const conversions = adsData.conversions || (ga4Data ? extractConversions(ga4Data) : Math.floor(Math.random() * 50) + 20);
+    
+    // Get real conversions from GA4 for paid campaigns
+    let conversions = 0;
+    if (adsData.conversions) {
+      conversions = adsData.conversions;
+    } else if (analyticsCore) {
+      conversions = await extractConversions(analyticsCore, startDate, endDate);
+    } else {
+      conversions = Math.floor(Math.random() * 50) + 20; // Fallback
+    }
     
     // Get bounce rate specifically from Traffic Acquisition > Session Campaigns
     let avgBounceRate;
@@ -466,10 +513,41 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
       }
     }
     
+    // Calculate accurate CTR from campaign data for consistency
+    let accurateClickRate = adsData.ctr;
+    
+    // If we have real Google Ads data, calculate CTR from actual campaign totals for accuracy
+    if (adsData.source === 'google_ads_api' && adsData.impressions > 0) {
+      try {
+        // Get campaign data to calculate total clicks (same source as Campaign Performance Details)
+        const campaignSpendData = await getCachedOrFetch(
+          'campaign_spend_enhanced',
+          startDate,
+          endDate,
+          () => adsCore.getCampaignSpend(startDate, endDate, true)
+        );
+        
+        // Calculate total clicks from all campaigns (matching Campaign Performance Details logic)
+        const totalClicks = campaignSpendData.campaigns.reduce((sum, campaign) => sum + campaign.clicks, 0);
+        
+        // Calculate CTR: (Total Clicks / Total Impressions) * 100
+        if (adsData.impressions > 0) {
+          accurateClickRate = (totalClicks / adsData.impressions) * 100;
+          console.log(`📊 CTR Calculation: ${totalClicks} clicks ÷ ${adsData.impressions} impressions = ${accurateClickRate.toFixed(3)}%`);
+        }
+      } catch (error) {
+        console.log('Could not calculate accurate CTR, using Google Ads API CTR:', error.message);
+        // Convert Google Ads decimal CTR to percentage if needed
+        if (adsData.ctr < 1) {
+          accurateClickRate = adsData.ctr * 100;
+        }
+      }
+    }
+
     res.json({
       totalCampaigns,
       totalImpressions: adsData.impressions,
-      clickRate: adsData.ctr,
+      clickRate: accurateClickRate,
       totalSessions,
       totalUsers,
       avgBounceRate: parseFloat(avgBounceRate),
@@ -674,258 +752,194 @@ router.get('/campaigns/details', verifySupabaseToken, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
-    // Get the same live data that the metrics cards use
-    let totalImpressions = 0;
-    let totalClicks = 0;
-    let totalSessions = 0;
-    let totalUsers = 0;
-    let avgBounceRate = 0;
-    let totalConversions = 0;
-    let totalSpend = 0;
+    console.log(`🔍 Fetching campaign details for ${startDate} to ${endDate}`);
     
+    // Initialize Google Analytics Core
+    const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
+    const analyticsCore = new GoogleAnalyticsCore();
+    await analyticsCore.initialize();
+    
+    // Get Google Ads campaign data (for clicks and cost)
+    let googleAdsCampaigns = [];
     try {
-      // Get Google Ads metrics (same as metrics cards)
-      const adsMetrics = await getCachedOrFetch(
-        'ads_metrics',
-        startDate,
-        endDate,
-        () => adsCore.getAdsMetrics(startDate, endDate)
-      );
-      
-      totalImpressions = adsMetrics.impressions || 0;
-      totalClicks = adsMetrics.clicks || 0;
-      
-      // Get spend data (same as metrics cards)
       const spendData = await getCachedOrFetch(
         'campaign_spend_enhanced',
         startDate,
         endDate,
         () => adsCore.getCampaignSpend(startDate, endDate, true)
       );
-      
-      totalSpend = spendData.netSpend?.original || 0;
-      
-      // Get GA4 data using Traffic Acquisition > Session Campaign (matching GA4 UI)
-      const { GoogleAnalyticsCore } = await import('../../core/analytics-core.js');
-      const analyticsCore = new GoogleAnalyticsCore();
-      await analyticsCore.initialize();
-      
-      // Query GA4 Traffic Acquisition by Session Campaign Name (exactly like GA4 UI)
-      const campaignTrafficData = await analyticsCore.queryAnalytics({
-        dimensions: ['sessionCampaignName'],
-        metrics: ['sessions', 'bounceRate'],
-        startDate,
-        endDate,
-        dimensionFilter: {
-          notExpression: {
-            filter: {
-              fieldName: 'sessionCampaignName',
-              inListFilter: {
-                values: ['(not set)', '(direct)', '(referral)', '(organic)', '(none)']
-              }
-            }
-          }
-        }
-      });
-      
-      console.log('🎯 GA4 Campaign Traffic Data:', JSON.stringify(campaignTrafficData, null, 2));
-      
-      // Also get overall metrics for totals
-      const overallGA4Data = await analyticsCore.queryAnalytics({
-        dimensions: ['sessionDefaultChannelGroup'],
-        metrics: ['sessions', 'totalUsers', 'bounceRate'],
-        startDate,
-        endDate,
-        dimensionFilter: {
-          filter: {
-            fieldName: 'sessionDefaultChannelGroup',
-            inListFilter: {
-              values: ['Paid Search', 'Display', 'Paid Video']
-            }
-          }
-        }
-      });
-      
-      if (overallGA4Data && overallGA4Data.rows) {
-        totalSessions = overallGA4Data.rows.reduce((sum, row) => sum + parseInt(row.metricValues[0].value || 0), 0);
-        totalUsers = overallGA4Data.rows.reduce((sum, row) => sum + parseInt(row.metricValues[1].value || 0), 0);
-        
-        // Calculate weighted average bounce rate
-        let totalWeightedBounceRate = 0;
-        let totalSessionsForBounce = 0;
-        overallGA4Data.rows.forEach(row => {
-          const sessions = parseInt(row.metricValues[0].value || 0);
-          const bounceRate = parseFloat(row.metricValues[2].value || 0) * 100;
-          totalWeightedBounceRate += (bounceRate * sessions);
-          totalSessionsForBounce += sessions;
-        });
-        avgBounceRate = totalSessionsForBounce > 0 ? totalWeightedBounceRate / totalSessionsForBounce : 0;
-      }
-      
-      // Mock conversion rate of ~2-3% of sessions for MVP
-      totalConversions = Math.floor(totalSessions * 0.025);
-      
+      googleAdsCampaigns = spendData.campaigns || [];
+      console.log(`📊 Google Ads campaigns found: ${googleAdsCampaigns.length}`);
     } catch (error) {
-      console.error('Error fetching live data:', error);
-      // Use fallback values that match current metrics
-      totalImpressions = 154143;
-      totalClicks = Math.floor(totalImpressions * 0.037 / 100);
-      totalSessions = 3327;
-      totalUsers = 2685;
-      avgBounceRate = 26.14;
-      totalConversions = 72;
-      totalSpend = 4198.245;
-      campaignTrafficData = null;
+      console.error('Error fetching Google Ads data:', error);
     }
     
-    // Create campaigns using real GA4 Traffic Acquisition data
-    let campaigns = [];
+    // Get GA4 campaign data with exact metrics (for sessions, engagement rate, conversions)
+    // Note: GA4 provides engagementRate, we calculate bounceRate = 100 - engagementRate
+    const ga4CampaignData = await analyticsCore.queryAnalytics({
+      dimensions: ['sessionCampaignName'],
+      metrics: ['sessions', 'engagementRate', 'totalUsers', 'eventCount', 'conversions'],
+      startDate,
+      endDate,
+      dimensionFilter: {
+        notExpression: {
+          filter: {
+            fieldName: 'sessionCampaignName',
+            inListFilter: {
+              values: ['(not set)', '(direct)', '(referral)', '(organic)', '(none)', '(cross-network)']
+            }
+          }
+        }
+      }
+    });
     
-    if (campaignTrafficData && campaignTrafficData.rows && campaignTrafficData.rows.length > 0) {
-      // Use real GA4 campaign data
-      const campaignMap = new Map();
+    console.log('🎯 GA4 Campaign Data:', JSON.stringify(ga4CampaignData, null, 2));
+    
+    // Create campaign map for merging data
+    const campaignMap = new Map();
+    
+    // Process GA4 data first (primary source for sessions/engagement rate/conversions)
+    if (ga4CampaignData && ga4CampaignData.rows) {
+      console.log(`🔍 Raw GA4 Data: Found ${ga4CampaignData.rows.length} campaign rows`);
       
-      campaignTrafficData.rows.forEach(row => {
+      ga4CampaignData.rows.forEach((row, index) => {
         const campaignName = row.dimensionValues[0]?.value;
         const sessions = parseInt(row.metricValues[0]?.value || 0);
-        const bounceRateDecimal = parseFloat(row.metricValues[1]?.value || 0);
-        const bounceRate = bounceRateDecimal; // Already in decimal format (0-1)
+        const engagementRate = parseFloat(row.metricValues[1]?.value || 0); // GA4 engagement rate (0-1)
+        const totalUsers = parseInt(row.metricValues[2]?.value || 0);
+        const eventCount = parseInt(row.metricValues[3]?.value || 0);
+        const conversions = parseInt(row.metricValues[4]?.value || 0);
         
-        console.log(`📊 GA4 Campaign: ${campaignName}, Sessions: ${sessions}, Bounce Rate: ${(bounceRate * 100).toFixed(2)}%`);
+        // Calculate bounce rate: Bounce Rate = 100 - (Engagement Rate * 100)
+        const bounceRatePercentage = 100 - (engagementRate * 100);
+        const bounceRateDecimal = bounceRatePercentage / 100; // Convert back to decimal for consistency
         
-        // Only include campaigns with meaningful data
-        if (campaignName && sessions > 0 && !['(not set)', '(direct)', '(referral)', '(organic)', '(none)'].includes(campaignName)) {
+        console.log(`📊 Row ${index + 1}: Campaign="${campaignName}"`);
+        console.log(`  Sessions: ${sessions}`);
+        console.log(`  Engagement Rate: ${(engagementRate * 100).toFixed(2)}%`);
+        console.log(`  Bounce Rate: ${bounceRatePercentage.toFixed(2)}%`);
+        console.log(`  Total Users: ${totalUsers}`);
+        console.log(`  Event Count: ${eventCount}`);
+        console.log(`  Conversions: ${conversions}`);
+        
+        if (campaignName && sessions > 0) {
           if (campaignMap.has(campaignName)) {
+            // Aggregate if campaign exists - sum all metrics
             const existing = campaignMap.get(campaignName);
-            existing.sessions += sessions;
-            // Weighted average bounce rate
-            const totalSessions = existing.sessions + sessions;
-            existing.bounceRate = ((existing.bounceRate * existing.sessions) + (bounceRate * sessions)) / totalSessions;
+            const oldSessions = existing.sessions;
+            const newTotalSessions = oldSessions + sessions;
+            
+            existing.sessions = newTotalSessions;
+            existing.totalUsers += totalUsers;
+            existing.eventCount += eventCount;
+            existing.conversions += conversions;
+            
+            // Weighted average bounce rate based on sessions
+            existing.bounceRate = ((existing.bounceRate * oldSessions) + (bounceRateDecimal * sessions)) / newTotalSessions;
+            
+            console.log(`  ➕ Aggregated with existing campaign: Total Sessions now ${newTotalSessions}`);
           } else {
             campaignMap.set(campaignName, {
               name: campaignName,
               sessions: sessions,
-              bounceRate: bounceRate
+              bounceRate: bounceRateDecimal, // Store as decimal for consistency
+              totalUsers: totalUsers,
+              eventCount: eventCount,
+              conversions: conversions,
+              clicks: 0,
+              cost: 0
             });
+            console.log(`  ✅ Added new campaign to map`);
           }
+        } else {
+          console.log(`  ❌ Skipped: Campaign="${campaignName}", Sessions=${sessions}`);
         }
       });
-      
-      // Convert to array and sort by sessions
-      const realCampaigns = Array.from(campaignMap.values()).sort((a, b) => b.sessions - a.sessions);
-      
-      console.log(`🎯 Found ${realCampaigns.length} real campaigns from GA4:`, realCampaigns.map(c => `${c.name}: ${c.sessions} sessions`));
-      
-      // Use top 3 campaigns or create them if we have fewer
-      campaigns = realCampaigns.slice(0, 3).map((campaign, index) => {
-        // Calculate proportional clicks and cost based on sessions
-        const sessionRatio = campaign.sessions / totalSessions;
-        const clicks = Math.floor(totalClicks * sessionRatio);
-        const cost = totalSpend * sessionRatio;
-        const conversions = Math.floor(totalConversions * sessionRatio);
-        const cpa = conversions > 0 ? cost / conversions : 0;
-        
-        // Determine status based on CPA and conversion rate
-        const conversionRate = conversions / campaign.sessions * 100;
-        let status = 'Good';
-        if (cpa > 200 || conversionRate < 1) status = 'Critical';
-        else if (cpa < 50 && conversionRate > 2) status = 'Excellent';
-        
-        return {
-          id: (index + 1).toString(),
-          name: campaign.name,
-          clicks: clicks,
-          sessions: campaign.sessions,
-          cost: cost,
-          bounceRate: campaign.bounceRate,
-          conversions: conversions,
-          cpa: cpa,
-          status: status
-        };
-      });
-      
-    } else {
-      // Fallback to mock campaigns with realistic proportions
-      campaigns = [
-        {
-          id: '1',
-          name: 'Custom & Corporate Gifts',
-          clicks: Math.floor(totalClicks * 0.55),
-          sessions: Math.floor(totalSessions * 0.54),
-          cost: totalSpend * 0.41,
-          bounceRate: avgBounceRate * 0.32 / 100,
-          conversions: Math.floor(totalConversions * 0.47),
-          cpa: 0,
-          status: 'Excellent'
-        },
-        {
-          id: '2',
-          name: 'Lanyards',
-          clicks: Math.floor(totalClicks * 0.27),
-          sessions: Math.floor(totalSessions * 0.33),
-          cost: totalSpend * 0.42,
-          bounceRate: avgBounceRate * 2.45 / 100,
-          conversions: Math.floor(totalConversions * 0.07),
-          cpa: 0,
-          status: 'Critical'
-        },
-        {
-          id: '3',
-          name: 'EP | DSA 10 | SG',
-          clicks: Math.floor(totalClicks * 0.18),
-          sessions: Math.floor(totalSessions * 0.13),
-          cost: totalSpend * 0.17,
-          bounceRate: avgBounceRate * 0.58 / 100,
-          conversions: Math.floor(totalConversions * 0.46),
-          cpa: 0,
-          status: 'Good'
-        }
-      ];
     }
     
-    // Calculate CPA for each campaign
-    campaigns.forEach(campaign => {
-      campaign.cpa = campaign.conversions > 0 ? campaign.cost / campaign.conversions : 0;
+    // Merge Google Ads data (for clicks and cost)
+    console.log(`🔍 Merging Google Ads data: ${googleAdsCampaigns.length} campaigns`);
+    googleAdsCampaigns.forEach((adsCampaign, index) => {
+      const campaignName = adsCampaign.name;
+      const clicks = adsCampaign.clicks || 0;
+      const cost = adsCampaign.spend || 0;
+      
+      console.log(`💰 Ads ${index + 1}: "${campaignName}" - Clicks: ${clicks}, Cost: $${cost.toFixed(2)}`);
+      
+      if (campaignMap.has(campaignName)) {
+        // Update existing campaign with ads data
+        const campaign = campaignMap.get(campaignName);
+        campaign.clicks += clicks;
+        campaign.cost += cost;
+        console.log(`  ➕ Merged with GA4 data: Total Cost now $${campaign.cost.toFixed(2)}`);
+      } else {
+        // Create new campaign entry (might not have GA4 data)
+        campaignMap.set(campaignName, {
+          name: campaignName,
+          sessions: 0,
+          bounceRate: 0,
+          totalUsers: 0,
+          eventCount: 0,
+          conversions: 0,
+          clicks: clicks,
+          cost: cost
+        });
+        console.log(`  ✅ Added new ads-only campaign`);
+      }
     });
     
+    // Convert to array and filter campaigns with meaningful paid advertising data
+    const allCampaigns = Array.from(campaignMap.values())
+      .filter(campaign => campaign.sessions > 0 && campaign.cost > 0) // Only campaigns with both sessions AND cost (paid campaigns)
+      .sort((a, b) => b.sessions - a.sessions);
+    
+    console.log(`🎯 Found ${allCampaigns.length} active paid campaigns:`, allCampaigns.map(c => c.name));
+    
+    // Log final campaign details for verification
+    allCampaigns.forEach((campaign, index) => {
+      console.log(`📋 Final Campaign ${index + 1}: "${campaign.name}"`);
+      console.log(`  Sessions: ${campaign.sessions} (raw from GA4)`);
+      console.log(`  Bounce Rate: ${(campaign.bounceRate * 100).toFixed(2)}% (calculated from GA4 engagement rate)`);
+      console.log(`  Clicks: ${campaign.clicks} (from Google Ads)`);
+      console.log(`  Cost: $${campaign.cost.toFixed(2)} (from Google Ads)`);
+      console.log(`  Conversions: ${campaign.conversions} (from GA4)`);
+    });
+    
+    // Format campaigns for the table (limit to top 3 paid campaigns)
+    const campaigns = allCampaigns.slice(0, 3).map((campaign, index) => {
+      const cpa = campaign.conversions > 0 ? campaign.cost / campaign.conversions : 0;
+      
+      // Determine status based on performance metrics
+      const conversionRate = campaign.sessions > 0 ? (campaign.conversions / campaign.sessions) * 100 : 0;
+      let status = 'Good';
+      
+      if (cpa > 200 || (conversionRate < 1 && campaign.sessions > 100)) {
+        status = 'Critical';
+      } else if (cpa < 50 && conversionRate > 2) {
+        status = 'Excellent';
+      }
+      
+      return {
+        id: (index + 1).toString(),
+        name: campaign.name,
+        clicks: campaign.clicks, // Raw from Google Ads
+        sessions: campaign.sessions, // Raw from GA4
+        cost: campaign.cost, // Raw from Google Ads
+        bounceRate: campaign.bounceRate, // Calculated from GA4 engagement rate
+        conversions: campaign.conversions, // Raw from GA4
+        cpa: cpa,
+        status: status
+      };
+    });
+    
+    console.log(`📋 Returning ${campaigns.length} campaigns for table display`);
     res.json(campaigns);
     
   } catch (error) {
     console.error('Campaign details error:', error);
     
-    // Return mock data on error
-    res.json([
-      {
-        id: '1',
-        name: 'Custom & Corporate Gifts',
-        clicks: 2361,
-        sessions: 1783,
-        cost: 1731.43,
-        bounceRate: 0.0774,
-        conversions: 34,
-        status: 'Excellent'
-      },
-      {
-        id: '2',
-        name: 'Lanyards',
-        clicks: 1458,
-        sessions: 1106,
-        cost: 1763.79,
-        bounceRate: 0.6401,
-        conversions: 5,
-        status: 'Critical'
-      },
-      {
-        id: '3',
-        name: 'EP | DSA 10 | SG',
-        clicks: 432,
-        sessions: 526,
-        cost: 888.61,
-        bounceRate: 0.1521,
-        conversions: 38,
-        status: 'Good'
-      }
-    ]);
+    // Return empty array on error instead of hardcoded data
+    res.json([]);
   }
 });
 
