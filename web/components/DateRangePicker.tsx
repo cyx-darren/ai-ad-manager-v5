@@ -60,10 +60,33 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
   }
 
   const getDisplayText = () => {
-    const days = getDaysAgo()
-    if (days <= 7) return 'Last 7 days'
-    if (days <= 30) return 'Last 30 days'
-    if (days <= 90) return 'Last 90 days'
+    // Check if this is actually a "Last N days" preset by comparing with what the preset would generate
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(today.getDate() - 1)
+    
+    // Check for Last 7 days preset
+    const last7Start = new Date(yesterday)
+    last7Start.setDate(yesterday.getDate() - 6)
+    if (formatDate(value.startDate) === formatDate(last7Start) && formatDate(value.endDate) === formatDate(yesterday)) {
+      return 'Last 7 days'
+    }
+    
+    // Check for Last 30 days preset  
+    const last30Start = new Date(yesterday)
+    last30Start.setDate(yesterday.getDate() - 29)
+    if (formatDate(value.startDate) === formatDate(last30Start) && formatDate(value.endDate) === formatDate(yesterday)) {
+      return 'Last 30 days'
+    }
+    
+    // Check for Last 90 days preset
+    const last90Start = new Date(yesterday)
+    last90Start.setDate(yesterday.getDate() - 89)
+    if (formatDate(value.startDate) === formatDate(last90Start) && formatDate(value.endDate) === formatDate(yesterday)) {
+      return 'Last 90 days'
+    }
+    
+    // For custom date ranges, show the actual dates
     return `${formatDate(value.startDate)} - ${formatDate(value.endDate)}`
   }
 
