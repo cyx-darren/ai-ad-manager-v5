@@ -146,13 +146,80 @@ const calculateBounceRate = (ga4Data) => {
     );
     
     if (bounceRateIndex >= 0 && row.metricValues) {
-      const bounceRate = parseFloat(row.metricValues[bounceRateIndex].value || 0);
+      const bounceRateDecimal = parseFloat(row.metricValues[bounceRateIndex].value || 0);
+      // Convert from decimal (0-1) to percentage (0-100) to match GA4 UI
+      const bounceRate = bounceRateDecimal * 100;
       totalBounceRate += bounceRate;
       validRows++;
     }
   });
   
   return validRows > 0 ? (totalBounceRate / validRows).toFixed(2) : 0;
+};
+
+// New function to get bounce rate specifically from Traffic Acquisition > Session Campaigns
+const getCampaignBounceRate = async (analyticsCore, startDate, endDate) => {
+  try {
+    // Query GA4 for Traffic Acquisition data for ALL traffic sources by campaign (like GA4 UI)
+    // This matches the GA4 Traffic Acquisition report that shows all channels for each campaign
+    const campaignBounceData = await analyticsCore.queryAnalytics({
+      dimensions: ['sessionCampaignName'],
+      metrics: ['sessions', 'bounceRate'],
+      startDate,
+      endDate,
+      dimensionFilter: {
+        notExpression: {
+          filter: {
+            fieldName: 'sessionCampaignName',
+            inListFilter: {
+              values: ['(not set)', '(direct)', '(referral)', '(organic)', '(none)']
+            }
+          }
+        }
+      }
+    });
+    
+    if (!campaignBounceData || !campaignBounceData.rows || campaignBounceData.rows.length === 0) {
+      console.log('No campaign bounce rate data found');
+      return null;
+    }
+    
+    // Calculate weighted average bounce rate based on sessions
+    let totalWeightedBounceRate = 0;
+    let totalSessions = 0;
+    
+    campaignBounceData.rows.forEach(row => {
+      const sessionsIndex = campaignBounceData.metricHeaders?.findIndex(
+        header => header.name === 'sessions'
+      );
+      const bounceRateIndex = campaignBounceData.metricHeaders?.findIndex(
+        header => header.name === 'bounceRate'
+      );
+      
+      if (sessionsIndex >= 0 && bounceRateIndex >= 0 && row.metricValues) {
+        const sessions = parseInt(row.metricValues[sessionsIndex].value || 0);
+        const bounceRateDecimal = parseFloat(row.metricValues[bounceRateIndex].value || 0);
+        // Convert from decimal (0-1) to percentage (0-100) to match GA4 UI
+        const bounceRate = bounceRateDecimal * 100;
+        const campaignName = row.dimensionValues?.[0]?.value;
+        
+        if (sessions > 0 && campaignName && !['(not set)', '(direct)', '(referral)', '(organic)', '(none)'].includes(campaignName)) {
+          totalWeightedBounceRate += (bounceRate * sessions);
+          totalSessions += sessions;
+          console.log(`Campaign: ${campaignName} (ALL channels) - Sessions: ${sessions}, Bounce Rate: ${bounceRate.toFixed(2)}%`);
+        }
+      }
+    });
+    
+    const overallBounceRate = totalSessions > 0 ? (totalWeightedBounceRate / totalSessions) : 0;
+    console.log(`📈 Campaign Bounce Rate - Total Sessions: ${totalSessions}, Weighted Bounce Rate: ${overallBounceRate.toFixed(2)}%`);
+    
+    return overallBounceRate;
+    
+  } catch (error) {
+    console.error('Error fetching campaign bounce rate:', error);
+    return null;
+  }
 };
 
 const extractConversions = (ga4Data) => {
@@ -372,8 +439,22 @@ router.get('/metrics', verifySupabaseToken, async (req, res) => {
     // Process GA4 data or use fallback values
     const totalSessions = ga4Data ? sumSessions(ga4Data) : Math.floor(Math.random() * 2000) + 500;
     const totalUsers = ga4Data ? sumUsers(ga4Data) : Math.floor(Math.random() * 1500) + 300;
-    const avgBounceRate = ga4Data ? calculateBounceRate(ga4Data) : (Math.random() * 30 + 30).toFixed(2);
     const conversions = adsData.conversions || (ga4Data ? extractConversions(ga4Data) : Math.floor(Math.random() * 50) + 20);
+    
+    // Get bounce rate specifically from Traffic Acquisition > Session Campaigns
+    let avgBounceRate;
+    if (analyticsCore) {
+      try {
+        const campaignBounceRate = await getCampaignBounceRate(analyticsCore, startDate, endDate);
+        avgBounceRate = campaignBounceRate !== null ? campaignBounceRate.toFixed(2) : 
+                      (ga4Data ? calculateBounceRate(ga4Data) : (Math.random() * 30 + 30).toFixed(2));
+      } catch (error) {
+        console.error('Error getting campaign bounce rate:', error);
+        avgBounceRate = ga4Data ? calculateBounceRate(ga4Data) : (Math.random() * 30 + 30).toFixed(2);
+      }
+    } else {
+      avgBounceRate = ga4Data ? calculateBounceRate(ga4Data) : (Math.random() * 30 + 30).toFixed(2);
+    }
     
     // Get real campaign count from GA4 or use fallback
     let totalCampaigns = Math.floor(Math.random() * 5) + 1;
