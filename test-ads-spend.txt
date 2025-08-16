@@ -1,0 +1,29 @@
+TEST ADVERTISING SPEND REPORT
+Generated: August 2025
+
+Campaign Performance Summary:
+============================
+
+Campaign: "Summer Sale 2025"
+Date: 2025-08-01
+Spend: $1,250.00
+Platform: Google Ads
+Status: Active
+
+Campaign: "Back to School Promotion" 
+Date: 2025-08-02
+Spend: $890.50
+Platform: Facebook Ads
+Status: Active
+
+Campaign: "New Product Launch"
+Date: 2025-08-03  
+Spend: $2,100.75
+Platform: Display Network
+Status: Active
+
+Total Campaign Spend: $4,241.25
+Reporting Period: August 1-3, 2025
+Currency: USD
+
+This is a test file for PDF upload functionality.

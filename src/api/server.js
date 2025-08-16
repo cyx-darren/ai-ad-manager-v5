@@ -12,6 +12,7 @@ import { apiLogger, requestLogger } from '../utils/logger.js';
 import analyticsRoutes from './routes/analytics.js';
 import uploadRoutes from './routes/upload.js';
 import dashboardRoutes from './routes/dashboard.js';
+import googleAdsRoutes from './routes/google-ads.js';
 
 // Load environment variables
 dotenv.config();
@@ -148,6 +149,7 @@ class APIServer {
     // API routes
     this.app.use('/api/upload', uploadRoutes);
     this.app.use('/api/dashboard', dashboardRoutes);
+    this.app.use('/api/google-ads', googleAdsRoutes);
     // this.app.use('/api/analytics', analyticsRoutes); // temporarily disabled
 
     // Root endpoint

@@ -10,6 +10,7 @@ import DeviceChart from '@/components/charts/DeviceChart'
 import GeographicChart from '@/components/charts/GeographicChart'
 import CampaignChart from '@/components/charts/CampaignChart'
 import SpendBreakdown from '@/components/SpendBreakdown'
+import CampaignPerformanceTable from '@/components/CampaignPerformanceTable'
 import Link from 'next/link'
 import { RefreshCw } from 'lucide-react'
 
@@ -101,6 +102,7 @@ export default function Dashboard() {
     ctr: 0,
     source: 'loading'
   })
+  const [campaignDetails, setCampaignDetails] = useState([])
   const [showBreakdown, setShowBreakdown] = useState(false)
 
   useEffect(() => {
@@ -134,28 +136,30 @@ export default function Dashboard() {
       }
       
       // Fetch all data in parallel including Google Ads data
-      const [metricsRes, spendRes, adsRes, trafficRes, devicesRes, geoRes, campaignsRes] = await Promise.all([
+      const [metricsRes, spendRes, adsRes, trafficRes, devicesRes, geoRes, campaignsRes, campaignDetailsRes] = await Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/spend/google-ads?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/ads-metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/traffic?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/devices?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/geographic?startDate=${startStr}&endDate=${endStr}`, { headers }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/campaigns?startDate=${startStr}&endDate=${endStr}`, { headers })
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/campaigns?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/campaigns/details?startDate=${startStr}&endDate=${endStr}`, { headers })
       ])
       
       if (!metricsRes.ok) {
         throw new Error(`Failed to fetch metrics: ${metricsRes.status}`)
       }
       
-      const [metricsData, spendDataRes, adsDataRes, trafficData, devicesData, geoData, campaignsData] = await Promise.all([
+      const [metricsData, spendDataRes, adsDataRes, trafficData, devicesData, geoData, campaignsData, campaignDetailsData] = await Promise.all([
         metricsRes.json(),
         spendRes.ok ? spendRes.json() : null,
         adsRes.ok ? adsRes.json() : null,
         trafficRes.ok ? trafficRes.json() : null,
         devicesRes.ok ? devicesRes.json() : null,
         geoRes.ok ? geoRes.json() : null,
-        campaignsRes.ok ? campaignsRes.json() : null
+        campaignsRes.ok ? campaignsRes.json() : null,
+        campaignDetailsRes.ok ? campaignDetailsRes.json() : []
       ])
       
       setMetrics(metricsData)
@@ -189,6 +193,10 @@ export default function Dashboard() {
         geographic: geoData,
         campaigns: spendDataRes?.campaigns?.length > 0 ? spendDataRes.campaigns : campaignsData
       })
+      
+      // Set campaign details for the table
+      setCampaignDetails(campaignDetailsData || [])
+      
       setLastUpdated(new Date())
     } catch (error) {
       console.error('Failed to fetch data:', error)
@@ -293,6 +301,12 @@ export default function Dashboard() {
                 className="px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 border border-blue-200 rounded-md hover:bg-blue-50 transition"
               >
                 Upload PDF
+              </Link>
+              <Link
+                href="/settings"
+                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-700 border border-gray-200 rounded-md hover:bg-gray-50 transition"
+              >
+                Settings
               </Link>
               <button
                 onClick={handleSignOut}
@@ -456,6 +470,16 @@ export default function Dashboard() {
                 </>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Campaign Performance Table */}
+        {!metricsLoading && metrics && (
+          <div className="mt-8">
+            <CampaignPerformanceTable 
+              campaigns={campaignDetails} 
+              currency="SGD"
+            />
           </div>
         )}
 

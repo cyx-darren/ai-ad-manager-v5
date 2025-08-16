@@ -10,7 +10,7 @@ interface MetricCardProps {
     value: number
     direction: 'up' | 'down' | 'neutral'
   }
-  description?: string
+  description?: string | React.ReactNode
 }
 
 export default function MetricCard({ 
@@ -65,7 +65,7 @@ export default function MetricCard({
       )}
       
       {description && (
-        <p className="text-xs text-gray-500 mt-2">{description}</p>
+        <div className="text-xs text-gray-500 mt-2">{description}</div>
       )}
       
       {isMockData && (

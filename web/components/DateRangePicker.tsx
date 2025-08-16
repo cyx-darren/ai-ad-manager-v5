@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Calendar } from 'lucide-react'
 
 interface DateRange {
@@ -15,6 +15,11 @@ interface DateRangePickerProps {
 
 export default function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const [tempRange, setTempRange] = useState<DateRange>(value)
+
+  useEffect(() => {
+    setTempRange(value)
+  }, [value])
 
   const formatDate = (date: Date) => {
     return date.toISOString().split('T')[0]
@@ -22,16 +27,16 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
 
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newStartDate = new Date(e.target.value + 'T00:00:00.000Z')
-    onChange({
+    setTempRange({
       startDate: newStartDate,
-      endDate: value.endDate
+      endDate: tempRange.endDate
     })
   }
 
   const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newEndDate = new Date(e.target.value + 'T23:59:59.999Z')
-    onChange({
-      startDate: value.startDate,
+    setTempRange({
+      startDate: tempRange.startDate,
       endDate: newEndDate
     })
   }
@@ -46,10 +51,19 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
     const startDate = new Date(endDate)
     startDate.setDate(endDate.getDate() - (days - 1)) // N-1 days before yesterday
     
-    onChange({
+    setTempRange({
       startDate,
       endDate
     })
+  }
+
+  const handleApply = () => {
+    onChange(tempRange)
+    setIsOpen(false)
+  }
+
+  const handleCancel = () => {
+    setTempRange(value)
     setIsOpen(false)
   }
 
@@ -135,7 +149,7 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
                 </label>
                 <input
                   type="date"
-                  value={formatDate(value.startDate)}
+                  value={formatDate(tempRange.startDate)}
                   onChange={handleStartDateChange}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -146,16 +160,22 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
                 </label>
                 <input
                   type="date"
-                  value={formatDate(value.endDate)}
+                  value={formatDate(tempRange.endDate)}
                   onChange={handleEndDateChange}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end mt-4">
+            <div className="flex justify-end gap-2 mt-4">
               <button
-                onClick={() => setIsOpen(false)}
+                onClick={handleCancel}
+                className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApply}
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
               >
                 Apply

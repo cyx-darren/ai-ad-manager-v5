@@ -312,6 +312,83 @@ router.get('/history', verifySupabaseToken, async (req, res) => {
   }
 });
 
+// GET /api/upload/monthly-history - Get monthly reconciliation data
+router.get('/monthly-history', verifySupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { limit = 50, offset = 0 } = req.query;
+    
+    const { data, error } = await supabaseAdmin
+      .from('pdf_uploads')
+      .select(`
+        id,
+        filename,
+        file_size,
+        upload_date,
+        processing_status,
+        parsed_data,
+        created_at
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+      
+    if (error) {
+      console.error('Database error:', error);
+      return res.status(500).json({ error: 'Failed to fetch upload history' });
+    }
+    
+    // Transform data for monthly reconciliation view
+    const monthlyData = (data || []).map(upload => {
+      // Extract month from parsed_data if available
+      let extractedMonth = null;
+      let extractedAmount = 0;
+      
+      if (upload.parsed_data) {
+        // Try to extract month from detectedMonth or from campaigns
+        if (upload.parsed_data.detectedMonth) {
+          extractedMonth = upload.parsed_data.detectedMonth;
+        } else if (upload.parsed_data.campaigns && upload.parsed_data.campaigns.length > 0) {
+          // Use the month from the first campaign date
+          const firstDate = upload.parsed_data.campaigns[0].date;
+          if (firstDate) {
+            const date = new Date(firstDate);
+            extractedMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          }
+        }
+        
+        // Extract total amount
+        extractedAmount = upload.parsed_data.totalAmount || 0;
+        
+        // If no month detected, try to infer from upload date
+        if (!extractedMonth) {
+          const uploadDate = new Date(upload.upload_date || upload.created_at);
+          extractedMonth = `${uploadDate.getFullYear()}-${String(uploadDate.getMonth() + 1).padStart(2, '0')}`;
+        }
+      }
+      
+      return {
+        id: upload.id,
+        filename: upload.filename,
+        file_size: upload.file_size,
+        upload_date: upload.upload_date || upload.created_at,
+        processing_status: upload.processing_status,
+        extracted_month: extractedMonth,
+        extracted_amount: extractedAmount
+      };
+    });
+    
+    res.json(monthlyData);
+    
+  } catch (error) {
+    console.error('Monthly upload history error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch monthly upload history',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
 // GET /api/upload/:id - Get upload details
 router.get('/:id', verifySupabaseToken, async (req, res) => {
   try {
