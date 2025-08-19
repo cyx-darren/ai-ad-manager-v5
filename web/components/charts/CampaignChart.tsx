@@ -28,8 +28,44 @@ export default function CampaignChart({ data, isLiveData = false }: CampaignChar
     )
   }
 
-  // Sort by spend and take top campaigns
-  const sortedData = [...data].sort((a, b) => b.spend - a.spend)
+  // Group campaigns with similar names
+  const groupedData = data.reduce((acc, campaign) => {
+    // Normalize campaign name for grouping
+    let groupName = campaign.name
+    
+    // Group "Custom & Corporate Gifts" variations
+    if (campaign.name.toLowerCase().includes('custom & corporate gifts') || 
+        campaign.name.toLowerCase().includes('custom and corporate gifts')) {
+      groupName = 'Custom & Corporate Gifts'
+    }
+    // Group "EP | DSA" variations
+    else if (campaign.name.includes('EP | DSA') || 
+             campaign.name.includes('EP|DSA')) {
+      groupName = 'EP | DSA 10 | SG'
+    }
+    // Group "Lanyards" variations
+    else if (campaign.name.toLowerCase().includes('lanyard')) {
+      groupName = 'Lanyards'
+    }
+    
+    if (!acc[groupName]) {
+      acc[groupName] = {
+        name: groupName,
+        spend: 0,
+        impressions: 0,
+        clicks: 0
+      }
+    }
+    
+    acc[groupName].spend += campaign.spend
+    acc[groupName].impressions += campaign.impressions || 0
+    acc[groupName].clicks += campaign.clicks || 0
+    
+    return acc
+  }, {} as Record<string, CampaignData>)
+
+  // Convert grouped data back to array and sort by spend
+  const sortedData = Object.values(groupedData).sort((a, b) => b.spend - a.spend)
   const topCampaigns = sortedData.slice(0, 7)
   const otherCampaigns = sortedData.slice(7)
   
