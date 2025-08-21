@@ -1,11 +1,15 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { GoogleAnalyticsCore } from '../core/analytics-core.js';
 import { verifySupabaseToken } from './middleware/auth.js';
 import { cacheMiddleware, getCacheStats } from './middleware/cache.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { performanceMiddleware, getPerformanceStats } from './middleware/performance.js';
+import { paginationMiddleware } from './middleware/pagination.js';
 import { apiLogger, requestLogger } from '../utils/logger.js';
 
 // Import route modules
@@ -29,6 +33,20 @@ class APIServer {
   }
 
   initializeMiddleware() {
+    // Compression middleware - should be first
+    this.app.use(compression({
+      level: 6, // Good balance between compression ratio and speed
+      threshold: 1024, // Only compress responses larger than 1KB
+      filter: (req, res) => {
+        // Don't compress responses with this request header
+        if (req.headers['x-no-compression']) {
+          return false
+        }
+        // Use compression filter
+        return compression.filter(req, res)
+      }
+    }));
+
     // Security middleware
     this.app.use(helmet({
       contentSecurityPolicy: {
@@ -70,6 +88,12 @@ class APIServer {
 
     // Request logging middleware
     this.app.use(requestLogger(apiLogger));
+    
+    // Performance monitoring middleware
+    this.app.use(performanceMiddleware);
+    
+    // Pagination middleware for API routes
+    this.app.use('/api/', paginationMiddleware(25, 100)); // Default 25 items, max 100
 
     // Cache middleware for GET requests (improves performance)
     this.app.use('/api/analytics', cacheMiddleware);
@@ -86,6 +110,15 @@ class APIServer {
     // Cache stats endpoint
     this.app.get('/api/cache/stats', (req, res) => {
       res.json(getCacheStats());
+    });
+
+    // Performance stats endpoint
+    this.app.get('/api/performance', (req, res) => {
+      const stats = getPerformanceStats();
+      res.json({
+        timestamp: new Date().toISOString(),
+        ...stats
+      });
     });
 
     // Error tracking endpoint
@@ -168,42 +201,12 @@ class APIServer {
     });
 
     // 404 handler for API routes
-    this.app.use('/api/*', (req, res) => {
-      res.status(404).json({
-        error: 'API endpoint not found',
-        path: req.path,
-        method: req.method,
-        availableEndpoints: [
-          'GET /api/health',
-          'GET /api/analytics/*',
-          'GET /api/dashboard/metrics (protected)',
-        ]
-      });
-    });
+    this.app.use('/api/*', notFoundHandler);
   }
 
   initializeErrorHandling() {
-    // Global error handler
-    this.app.use((error, req, res, next) => {
-      console.error('API Error:', error);
-
-      // Don't leak error details in production
-      const isDevelopment = process.env.NODE_ENV !== 'production';
-      
-      const errorResponse = {
-        error: 'Internal server error',
-        timestamp: new Date().toISOString(),
-        path: req.path,
-        method: req.method,
-      };
-
-      if (isDevelopment) {
-        errorResponse.message = error.message;
-        errorResponse.stack = error.stack;
-      }
-
-      res.status(error.statusCode || 500).json(errorResponse);
-    });
+    // Use the comprehensive error handler middleware
+    this.app.use(errorHandler);
 
     // Graceful shutdown handlers
     process.on('SIGTERM', () => {

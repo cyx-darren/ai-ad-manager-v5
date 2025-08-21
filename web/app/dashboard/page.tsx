@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import MetricCard from '@/components/MetricCard'
@@ -13,6 +13,7 @@ import SpendBreakdown from '@/components/SpendBreakdown'
 import CampaignPerformanceTable from '@/components/CampaignPerformanceTable'
 import Link from 'next/link'
 import { RefreshCw } from 'lucide-react'
+import { debounce } from '@/utils/debounce'
 
 interface DashboardMetrics {
   totalCampaigns: number
@@ -70,6 +71,10 @@ interface AdsMetrics {
   source: string
   conversions?: number
   avgCpc?: number
+  fallback_used?: boolean
+  is_live?: boolean
+  cached_at?: string
+  original_error?: string
 }
 
 export default function Dashboard() {
@@ -111,6 +116,14 @@ export default function Dashboard() {
     }
   }, [user, loading, router])
 
+  // Debounced version for user interactions
+  const debouncedFetchData = useMemo(
+    () => debounce(async () => {
+      await fetchAllData()
+    }, 300),
+    []
+  )
+
   const fetchAllData = useCallback(async () => {
     if (!user) return
     
@@ -136,10 +149,11 @@ export default function Dashboard() {
       }
       
       // Fetch all data in parallel including Google Ads data
-      const [metricsRes, spendRes, adsRes, trafficRes, devicesRes, geoRes, campaignsRes, campaignDetailsRes] = await Promise.all([
+      const [metricsRes, spendRes, adsRes, googleAdsRes, trafficRes, devicesRes, geoRes, campaignsRes, campaignDetailsRes] = await Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/spend/google-ads?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/ads-metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/google-ads/metrics?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/traffic?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/devices?startDate=${startStr}&endDate=${endStr}`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/charts/geographic?startDate=${startStr}&endDate=${endStr}`, { headers }),
@@ -151,10 +165,11 @@ export default function Dashboard() {
         throw new Error(`Failed to fetch metrics: ${metricsRes.status}`)
       }
       
-      const [metricsData, spendDataRes, adsDataRes, trafficData, devicesData, geoData, campaignsData, campaignDetailsData] = await Promise.all([
+      const [metricsData, spendDataRes, adsDataRes, googleAdsDataRes, trafficData, devicesData, geoData, campaignsData, campaignDetailsData] = await Promise.all([
         metricsRes.json(),
         spendRes.ok ? spendRes.json() : null,
         adsRes.ok ? adsRes.json() : null,
+        googleAdsRes.ok ? googleAdsRes.json() : null,
         trafficRes.ok ? trafficRes.json() : null,
         devicesRes.ok ? devicesRes.json() : null,
         geoRes.ok ? geoRes.json() : null,
@@ -174,8 +189,21 @@ export default function Dashboard() {
         })
       }
       
-      // Set Google Ads metrics data
-      if (adsDataRes) {
+      // Set Google Ads metrics data - prefer new API with fallback support
+      if (googleAdsDataRes) {
+        setAdsMetrics({
+          impressions: googleAdsDataRes.impressions || 0,
+          clicks: googleAdsDataRes.clicks || 0,
+          ctr: parseFloat(googleAdsDataRes.ctr || 0),
+          source: googleAdsDataRes.source || 'unknown',
+          conversions: googleAdsDataRes.conversions,
+          avgCpc: parseFloat(googleAdsDataRes.cpc || 0),
+          fallback_used: googleAdsDataRes.fallback_used,
+          is_live: googleAdsDataRes.is_live,
+          cached_at: googleAdsDataRes.cached_at,
+          original_error: googleAdsDataRes.original_error
+        })
+      } else if (adsDataRes) {
         setAdsMetrics({
           impressions: adsDataRes.impressions || 0,
           clicks: adsDataRes.clicks || 0,
@@ -361,68 +389,99 @@ export default function Dashboard() {
 
         {/* Metrics Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {metricsLoading && !metrics ? (
-            // Loading skeletons
-            [...Array(8)].map((_, i) => (
-              <div key={i} className="bg-white rounded-lg shadow p-6 animate-pulse">
-                <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
-                <div className="h-8 bg-gray-200 rounded w-3/4 mb-2"></div>
-                <div className="h-3 bg-gray-200 rounded w-full"></div>
-              </div>
-            ))
-          ) : metrics && (
-            <>
             <MetricCard
               title="Total Campaigns"
-              value={metrics.totalCampaigns}
-              isMockData={metrics.mockDataFields?.includes('totalCampaigns') || false}
+              value={metrics?.totalCampaigns || 0}
+              loading={metricsLoading && !metrics}
+              isMockData={metrics?.mockDataFields?.includes('totalCampaigns') || false}
               description="Active advertising campaigns"
             />
             
             <MetricCard
               title="Total Impressions"
-              value={adsMetrics.impressions || metrics.totalImpressions}
-              isMockData={adsMetrics.source === 'mock_data' || metrics.mockDataFields?.includes('totalImpressions') || false}
-              description={`Ad views from ${adsMetrics.source === 'google_ads_api' ? 'Google Ads' : 'mock data'}`}
+              value={adsMetrics.impressions || metrics?.totalImpressions || 0}
+              loading={metricsLoading && !metrics}
+              dataSource={adsMetrics.source as "google_ads_api" | "cache" | "mock" | "ga4" | "live" | undefined}
+              isLive={adsMetrics.is_live}
+              cachedAt={adsMetrics.cached_at}
+              isMockData={adsMetrics.source === 'mock' || adsMetrics.source === 'mock_data' || metrics?.mockDataFields?.includes('totalImpressions') || false}
+              description={
+                <div>
+                  {adsMetrics.source === 'google_ads_api' ? 'Live Google Ads data' :
+                   adsMetrics.source === 'cache' ? 'Cached Google Ads data' :
+                   adsMetrics.source === 'mock' ? 'Mock Google Ads data' :
+                   'Ad views from Google Ads'}
+                  {adsMetrics.original_error && (
+                    <div className="text-xs text-red-600 mt-1">
+                      Fallback: {adsMetrics.original_error}
+                    </div>
+                  )}
+                </div>
+              }
             />
             
             <MetricCard
               title="Click Rate"
-              value={(adsMetrics.ctr || metrics.clickRate) * 100}
+              value={adsMetrics.ctr || metrics?.clickRate || 0}
               unit="%"
-              isMockData={adsMetrics.source === 'mock_data' || metrics.mockDataFields?.includes('clickRate') || false}
-              description={`CTR from ${adsMetrics.source === 'google_ads_api' ? 'Google Ads' : 'mock data'}`}
+              loading={metricsLoading && !metrics}
+              dataSource={adsMetrics.source as "google_ads_api" | "cache" | "mock" | "ga4" | "live" | undefined}
+              isLive={adsMetrics.is_live}
+              cachedAt={adsMetrics.cached_at}
+              isMockData={adsMetrics.source === 'mock' || adsMetrics.source === 'mock_data' || metrics?.mockDataFields?.includes('clickRate') || false}
+              description={
+                <div>
+                  {adsMetrics.source === 'google_ads_api' ? 'Live Google Ads CTR' :
+                   adsMetrics.source === 'cache' ? 'Cached Google Ads CTR' :
+                   adsMetrics.source === 'mock' ? 'Mock Google Ads CTR' :
+                   'Click-through rate from Google Ads'}
+                  {adsMetrics.original_error && (
+                    <div className="text-xs text-red-600 mt-1">
+                      Fallback: {adsMetrics.original_error}
+                    </div>
+                  )}
+                </div>
+              }
             />
             
             <MetricCard
               title="Total Sessions"
-              value={metrics.totalSessions}
+              value={metrics?.totalSessions || 0}
+              loading={metricsLoading && !metrics}
+              dataSource="ga4"
               description="Paid channel visits (Paid Search, Display, Paid Video)"
             />
             
             <MetricCard
               title="Total Users"
-              value={metrics.totalUsers}
+              value={metrics?.totalUsers || 0}
+              loading={metricsLoading && !metrics}
+              dataSource="ga4"
               description="Unique paid channel visitors (Paid Search, Display, Paid Video)"
             />
             
             <MetricCard
               title="Bounce Rate"
-              value={metrics.avgBounceRate}
+              value={metrics?.avgBounceRate || 0}
               unit="%"
+              loading={metricsLoading && !metrics}
+              dataSource="ga4"
               description="Percentage of single-page visits"
             />
             
             <MetricCard
               title="Conversions"
-              value={metrics.conversions}
+              value={metrics?.conversions || 0}
+              loading={metricsLoading && !metrics}
+              dataSource="ga4"
               description="Goal completions"
             />
             
             <MetricCard
               title="Total Spend"
-              value={parseFloat(spendData.total || metrics.totalSpend).toFixed(2)}
+              value={parseFloat(spendData.total || metrics?.totalSpend || 0).toFixed(2)}
               unit={metrics?.currency?.display || spendData.currency || "SGD"}
+              loading={metricsLoading && !metrics}
               description={
                 <div className="space-y-1">
                   <div>{`Net spend from ${spendData.source === 'google_ads_api' ? 'Google Ads API' : spendData.source === 'mock_data' ? 'mock data' : 'loading...'}`}</div>
@@ -439,10 +498,8 @@ export default function Dashboard() {
                   )}
                 </div>
               }
-              isMockData={spendData.source === 'mock_data' || metrics.mockDataFields?.includes('totalSpend')}
+              isMockData={spendData.source === 'mock_data' || metrics?.mockDataFields?.includes('totalSpend') || false}
             />
-            </>
-          )}
         </div>
 
         {/* Charts Section */}

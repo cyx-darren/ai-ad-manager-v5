@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { supabaseAdmin } from '../../db/supabase-client.js';
 import { verifySupabaseToken } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = express.Router();
 
@@ -14,7 +15,10 @@ const upload = multer({
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF files allowed'));
+      const error = new Error('Only PDF files are allowed');
+      error.code = 'INVALID_FILE_TYPE';
+      error.status = 400;
+      cb(error);
     }
   }
 });
@@ -156,13 +160,15 @@ const extractSpendData = (pdfText) => {
 };
 
 // POST /api/upload/pdf - Upload and parse PDF
-router.post('/pdf', verifySupabaseToken, upload.single('file'), async (req, res) => {
-  try {
+router.post('/pdf', verifySupabaseToken, upload.single('file'), asyncHandler(async (req, res) => {
     const userId = req.user.id;
     const file = req.file;
     
     if (!file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      const error = new Error('No file uploaded');
+      error.status = 400;
+      error.code = 'NO_FILE_UPLOADED';
+      throw error;
     }
     
     // Parse PDF content - Demo implementation
@@ -235,7 +241,11 @@ router.post('/pdf', verifySupabaseToken, upload.single('file'), async (req, res)
       
     if (error) {
       console.error('Database error:', error);
-      return res.status(500).json({ error: 'Failed to save upload record' });
+      const dbError = new Error('Failed to save upload record');
+      dbError.status = 500;
+      dbError.code = 'DATABASE_ERROR';
+      dbError.originalError = error;
+      throw dbError;
     }
     
     // Store spend entries
@@ -264,19 +274,10 @@ router.post('/pdf', verifySupabaseToken, upload.single('file'), async (req, res)
       campaigns_found: extractedData.campaigns.length,
       total_amount: extractedData.totalAmount
     });
-    
-  } catch (error) {
-    console.error('PDF upload error:', error);
-    res.status(500).json({ 
-      error: 'Failed to process PDF upload',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+}));
 
 // GET /api/upload/history - Get user's uploads
-router.get('/history', verifySupabaseToken, async (req, res) => {
-  try {
+router.get('/history', verifySupabaseToken, asyncHandler(async (req, res) => {
     const userId = req.user.id;
     const { limit = 50, offset = 0 } = req.query;
     
@@ -302,19 +303,10 @@ router.get('/history', verifySupabaseToken, async (req, res) => {
     
     // Return the uploads array directly (frontend expects this structure)
     res.json(data || []);
-    
-  } catch (error) {
-    console.error('Upload history error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch upload history',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+}));
 
 // GET /api/upload/monthly-history - Get monthly reconciliation data
-router.get('/monthly-history', verifySupabaseToken, async (req, res) => {
-  try {
+router.get('/monthly-history', verifySupabaseToken, asyncHandler(async (req, res) => {
     const userId = req.user.id;
     const { limit = 50, offset = 0 } = req.query;
     
@@ -379,19 +371,10 @@ router.get('/monthly-history', verifySupabaseToken, async (req, res) => {
     });
     
     res.json(monthlyData);
-    
-  } catch (error) {
-    console.error('Monthly upload history error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch monthly upload history',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+}));
 
 // GET /api/upload/:id - Get upload details
-router.get('/:id', verifySupabaseToken, async (req, res) => {
-  try {
+router.get('/:id', verifySupabaseToken, asyncHandler(async (req, res) => {
     const userId = req.user.id;
     const { id } = req.params;
     
@@ -440,14 +423,6 @@ router.get('/:id', verifySupabaseToken, async (req, res) => {
       upload: uploadData,
       campaigns: spendData || []
     });
-    
-  } catch (error) {
-    console.error('Upload details error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch upload details',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+}));
 
 export default router;

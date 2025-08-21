@@ -3,6 +3,7 @@
 import { useDropzone } from 'react-dropzone'
 import { useState } from 'react'
 import { Upload, CheckCircle, AlertCircle, FileText } from 'lucide-react'
+import { handleApiError, handleFileUploadError, logClientError } from '../utils/errorHandler'
 
 interface FileUploadProps {
   onUploadSuccess?: (data: any) => void
@@ -14,12 +15,14 @@ export default function FileUpload({ onUploadSuccess, onUploadError }: FileUploa
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [uploadMessage, setUploadMessage] = useState('')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   const onDrop = async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return
 
     setUploading(true)
     setUploadStatus('idle')
+    setUploadProgress(0)
     const file = acceptedFiles[0]
     setUploadedFile(file)
     
@@ -53,6 +56,9 @@ export default function FileUpload({ onUploadSuccess, onUploadError }: FileUploa
       const formData = new FormData()
       formData.append('file', file)
       
+      // Simulate progress for better UX
+      setUploadProgress(30)
+      
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/api/upload/pdf`,
         {
@@ -64,20 +70,31 @@ export default function FileUpload({ onUploadSuccess, onUploadError }: FileUploa
         }
       )
       
+      setUploadProgress(70)
+      
       const data = await response.json()
       
       if (!response.ok) {
         throw new Error(data.error || `Upload failed: ${response.status}`)
       }
       
+      setUploadProgress(100)
       setUploadStatus('success')
       setUploadMessage(`Successfully uploaded ${file.name}`)
       onUploadSuccess?.(data)
       
     } catch (error) {
       console.error('Upload failed:', error)
+      
+      // Log error to server
+      await logClientError(error, {
+        operation: 'file_upload',
+        fileName: file.name,
+        fileSize: file.size
+      })
+      
       setUploadStatus('error')
-      const errorMessage = error instanceof Error ? error.message : 'Upload failed'
+      const errorMessage = handleApiError(error)
       setUploadMessage(errorMessage)
       onUploadError?.(errorMessage)
     } finally {
@@ -116,6 +133,15 @@ export default function FileUpload({ onUploadSuccess, onUploadError }: FileUploa
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
             <p className="text-lg font-medium text-gray-900">Uploading PDF...</p>
             <p className="text-sm text-gray-500 mt-2">Processing {uploadedFile?.name}</p>
+            <div className="w-full max-w-xs mt-4">
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
+              <p className="text-xs text-gray-500 mt-1 text-center">{uploadProgress}%</p>
+            </div>
           </div>
         ) : uploadStatus === 'success' ? (
           <div className="flex flex-col items-center">
@@ -174,9 +200,7 @@ export default function FileUpload({ onUploadSuccess, onUploadError }: FileUploa
               <ul className="list-disc list-inside ml-2">
                 {errors.map(error => (
                   <li key={error.code}>
-                    {error.code === 'file-too-large' ? 'File is larger than 10MB' :
-                     error.code === 'file-invalid-type' ? 'Only PDF files are allowed' :
-                     error.message}
+                    {handleFileUploadError(error)}
                   </li>
                 ))}
               </ul>

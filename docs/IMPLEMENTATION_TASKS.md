@@ -2821,6 +2821,1086 @@ Change date picker
 EXPECT: Table refreshes with new data
 ----
 
+--------------------------------------------------------------------------------
+TASK 5.1: ADD LOADING STATES
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: web/components/*, web/app/dashboard/*
+
+IMPLEMENTATION:
+----
+// Create LoadingSpinner component
+// web/components/LoadingSpinner.jsx
+export default function LoadingSpinner({ size = 'md' }) {
+  const sizeClasses = {
+    sm: 'h-4 w-4',
+    md: 'h-8 w-8',
+    lg: 'h-12 w-12'
+  };
+  
+  return (
+    <div className="flex justify-center items-center">
+      <div className={`animate-spin rounded-full border-b-2 border-blue-600 ${sizeClasses[size]}`}></div>
+    </div>
+  );
+}
+
+// Add loading states to metric cards
+// web/components/MetricCard.jsx
+{loading ? (
+  <div className="animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+    <div className="h-8 bg-gray-200 rounded w-3/4"></div>
+  </div>
+) : (
+  <div>{value}</div>
+)}
+
+// Add loading overlay for data refresh
+// web/components/LoadingOverlay.jsx
+export default function LoadingOverlay({ isLoading, message = 'Loading...' }) {
+  if (!isLoading) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-lg p-6 flex flex-col items-center">
+        <LoadingSpinner size="lg" />
+        <p className="mt-4 text-gray-600">{message}</p>
+      </div>
+    </div>
+  );
+}
+----
+
+ADD TO DASHBOARD:
+- Button loading states during API calls
+- Skeleton loaders for charts
+- Progress indicators for PDF upload
+- Loading overlay for page transitions
+- Shimmer effects for data tables
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Loading states appear
+Trigger any API call
+EXPECT: Loading indicator visible during request
+
+Check 2: No layout shift
+Loading state should match loaded content dimensions
+EXPECT: Smooth transition without jumps
+
+Check 3: All async operations covered
+Test: Login, Dashboard load, Date change, PDF upload
+EXPECT: Loading indicator for each operation
+----
+
+--------------------------------------------------------------------------------
+TASK 5.2: IMPLEMENT COMPREHENSIVE ERROR HANDLING
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: src/api/*, web/utils/errorHandler.js, web/components/ErrorBoundary.jsx
+
+BACKEND ERROR HANDLING:
+----
+// src/api/middleware/errorHandler.js
+export const errorHandler = (err, req, res, next) => {
+  console.error('Error:', err);
+  
+  // Determine error type and status
+  let status = err.status || 500;
+  let message = err.message || 'Internal server error';
+  
+  // Handle specific error types
+  if (err.name === 'ValidationError') {
+    status = 400;
+    message = 'Invalid request data';
+  } else if (err.name === 'UnauthorizedError') {
+    status = 401;
+    message = 'Authentication required';
+  } else if (err.code === 'ECONNREFUSED') {
+    status = 503;
+    message = 'Service temporarily unavailable';
+  }
+  
+  // Send error response
+  res.status(status).json({
+    error: {
+      message,
+      status,
+      timestamp: new Date().toISOString(),
+      path: req.path
+    }
+  });
+};
+
+// Apply to all routes
+app.use(errorHandler);
+----
+
+FRONTEND ERROR HANDLING:
+----
+// web/components/ErrorBoundary.jsx
+import { Component } from 'react';
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  
+  componentDidCatch(error, errorInfo) {
+    console.error('ErrorBoundary caught:', error, errorInfo);
+    // Send to error tracking service
+  }
+  
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center p-8">
+            <h1 className="text-2xl font-bold text-red-600 mb-4">
+              Oops! Something went wrong
+            </h1>
+            <p className="text-gray-600 mb-4">
+              We're sorry for the inconvenience. Please try refreshing the page.
+            </p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+            >
+              Refresh Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    
+    return this.props.children;
+  }
+}
+
+// web/utils/errorHandler.js
+export const handleApiError = (error) => {
+  if (error.response) {
+    // Server responded with error
+    const message = error.response.data?.error?.message || 'Server error occurred';
+    console.error('API Error:', message);
+    return message;
+  } else if (error.request) {
+    // Request made but no response
+    console.error('Network Error:', error.message);
+    return 'Network error - please check your connection';
+  } else {
+    // Other errors
+    console.error('Error:', error.message);
+    return 'An unexpected error occurred';
+  }
+};
+----
+
+ERROR SCENARIOS TO HANDLE:
+- Network failures
+- API rate limiting
+- Invalid credentials
+- Expired sessions
+- PDF parsing failures
+- GA4 API errors
+- Google Ads API errors
+- Database connection errors
+- File upload size exceeded
+- Invalid file formats
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: API error handling
+Disconnect network and try API call
+EXPECT: Friendly error message shown
+
+Check 2: Error boundary works
+Throw error in component
+EXPECT: Error boundary catches and displays fallback UI
+
+Check 3: Form validation
+Submit invalid data
+EXPECT: Clear validation error messages
+----
+
+--------------------------------------------------------------------------------
+TASK 5.3: TEST GOOGLE ADS API FALLBACK
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: src/api/routes/google-ads.js, src/core/ads-core-enhanced.js
+
+FALLBACK IMPLEMENTATION:
+----
+// src/api/routes/google-ads.js
+app.get('/api/google-ads/metrics', verifySupabaseToken, async (req, res) => {
+  try {
+    // Try to get real data
+    const adsCore = new GoogleAdsCore();
+    const data = await adsCore.getCampaignMetrics(startDate, endDate);
+    
+    res.json({
+      ...data,
+      source: 'google_ads_api',
+      is_live: true
+    });
+  } catch (error) {
+    console.error('Google Ads API error:', error);
+    
+    // Check if we have cached data
+    const cached = await getCachedMetrics(req.user.id, startDate, endDate);
+    if (cached) {
+      return res.json({
+        ...cached,
+        source: 'cache',
+        is_live: false,
+        cached_at: cached.timestamp
+      });
+    }
+    
+    // Fall back to mock data
+    const mockData = generateMockMetrics(startDate, endDate);
+    res.json({
+      ...mockData,
+      source: 'mock',
+      is_live: false,
+      note: 'Google Ads API unavailable, showing sample data'
+    });
+  }
+});
+
+// Mock data generator
+function generateMockMetrics(startDate, endDate) {
+  return {
+    impressions: Math.floor(Math.random() * 50000) + 10000,
+    clicks: Math.floor(Math.random() * 2000) + 500,
+    spend: Math.random() * 5000 + 1000,
+    ctr: (Math.random() * 3 + 2).toFixed(2),
+    conversions: Math.floor(Math.random() * 100) + 20,
+    cpc: (Math.random() * 2 + 0.5).toFixed(2)
+  };
+}
+----
+
+TEST SCENARIOS:
+----
+// Test 1: API credentials invalid
+Temporarily use wrong credentials
+EXPECT: Fallback to cached/mock data
+
+// Test 2: Rate limit exceeded
+Make 100+ rapid requests
+EXPECT: Graceful degradation to cache
+
+// Test 3: Network timeout
+Simulate slow network
+EXPECT: Timeout and fallback after 10s
+
+// Test 4: Partial data failure
+Some metrics fail, others succeed
+EXPECT: Show available data with indicators
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Invalid credentials
+Set wrong GOOGLE_ADS_CLIENT_ID
+EXPECT: Dashboard shows mock data with indicator
+
+Check 2: Cache fallback
+Make successful request, then fail API
+EXPECT: Shows cached data with timestamp
+
+Check 3: Clear indicators
+Check data source badges
+EXPECT: "Live", "Cached", or "Mock" clearly shown
+----
+
+--------------------------------------------------------------------------------
+TASK 5.4: PERFORMANCE OPTIMIZATION AUDIT
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: web/*, src/api/*
+
+FRONTEND OPTIMIZATIONS:
+----
+// 1. Implement code splitting
+// web/app/dashboard/page.jsx
+const MetricCards = lazy(() => import('@/components/MetricCards'));
+const Charts = lazy(() => import('@/components/Charts'));
+
+// 2. Optimize images
+// Use next/image with optimization
+import Image from 'next/image';
+<Image 
+  src="/logo.png" 
+  alt="Logo" 
+  width={200} 
+  height={50}
+  loading="lazy"
+  placeholder="blur"
+/>
+
+// 3. Implement virtual scrolling for large lists
+// web/components/VirtualList.jsx
+import { FixedSizeList } from 'react-window';
+
+// 4. Memoize expensive computations
+const expensiveCalculation = useMemo(() => {
+  return processLargeDataset(data);
+}, [data]);
+
+// 5. Debounce search inputs
+const debouncedSearch = useMemo(
+  () => debounce(handleSearch, 300),
+  []
+);
+----
+
+BACKEND OPTIMIZATIONS:
+----
+// 1. Implement database connection pooling
+const pool = new Pool({
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+// 2. Add compression middleware
+import compression from 'compression';
+app.use(compression());
+
+// 3. Implement query result pagination
+app.get('/api/data', async (req, res) => {
+  const { page = 1, limit = 50 } = req.query;
+  const offset = (page - 1) * limit;
+  // Paginated query
+});
+
+// 4. Add Redis caching for frequent queries
+import Redis from 'ioredis';
+const redis = new Redis();
+
+// 5. Optimize GA4 queries - batch where possible
+const batchQuery = {
+  entity: { propertyId },
+  requests: [
+    { dimensions, metrics, dateRanges },
+    { dimensions: otherDimensions, metrics: otherMetrics, dateRanges }
+  ]
+};
+----
+
+PERFORMANCE TARGETS:
+- First Contentful Paint: < 1.5s
+- Time to Interactive: < 3.5s
+- Largest Contentful Paint: < 2.5s
+- Cumulative Layout Shift: < 0.1
+- API response time: < 500ms
+- Dashboard load time: < 3s
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Lighthouse audit
+Run Lighthouse in Chrome DevTools
+EXPECT: Performance score > 90
+
+Check 2: Bundle size
+npm run build && npm run analyze
+EXPECT: Main bundle < 200KB
+
+Check 3: API performance
+Test with Apache Bench or similar
+EXPECT: 95th percentile < 500ms
+----
+
+--------------------------------------------------------------------------------
+TASK 6.1: CONFIGURE PRODUCTION ENVIRONMENT
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: .env.production, docker-compose.yml, nginx.conf
+
+PRODUCTION CONFIGURATION:
+----
+# docker-compose.yml
+version: '3.8'
+services:
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+    
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - web
+      - api
+    restart: unless-stopped
+
+# Dockerfile.api
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 5000
+CMD ["node", "src/api/index.js"]
+
+# Dockerfile.web
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine
+WORKDIR /app
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+EXPOSE 3000
+CMD ["npm", "start"]
+
+# nginx.conf
+server {
+  listen 80;
+  server_name your-domain.com;
+  return 301 https://$server_name$request_uri;
+}
+
+server {
+  listen 443 ssl http2;
+  server_name your-domain.com;
+  
+  ssl_certificate /etc/nginx/ssl/cert.pem;
+  ssl_certificate_key /etc/nginx/ssl/key.pem;
+  
+  location / {
+    proxy_pass http://web:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+  
+  location /api {
+    proxy_pass http://api:5000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+}
+----
+
+DEPLOYMENT CHECKLIST:
+- [ ] SSL certificates obtained
+- [ ] Domain configured
+- [ ] Environment variables secured
+- [ ] Database backups configured
+- [ ] Health checks implemented
+- [ ] Auto-restart configured
+- [ ] Log rotation setup
+- [ ] Firewall rules configured
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Docker builds
+docker-compose build
+EXPECT: All images build successfully
+
+Check 2: Health endpoints
+curl https://your-domain.com/api/health
+EXPECT: {"status": "healthy"}
+
+Check 3: SSL configuration
+SSL Labs test (ssllabs.com/ssltest)
+EXPECT: A+ rating
+----
+
+--------------------------------------------------------------------------------
+TASK 6.2: SET UP MONITORING AND ALERTING
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: src/utils/monitoring.js, docker-compose.monitoring.yml
+
+MONITORING STACK:
+----
+# docker-compose.monitoring.yml
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+      
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=secure_password
+      
+  node-exporter:
+    image: prom/node-exporter
+    ports:
+      - "9100:9100"
+
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api:5000']
+      
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+----
+
+APPLICATION METRICS:
+----
+// src/utils/monitoring.js
+import { register, Counter, Histogram, Gauge } from 'prom-client';
+
+// Request counter
+export const httpRequestsTotal = new Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status']
+});
+
+// Request duration
+export const httpRequestDuration = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route'],
+  buckets: [0.1, 0.5, 1, 2, 5]
+});
+
+// Active users gauge
+export const activeUsers = new Gauge({
+  name: 'active_users',
+  help: 'Number of active users'
+});
+
+// Error counter
+export const errorCounter = new Counter({
+  name: 'errors_total',
+  help: 'Total number of errors',
+  labelNames: ['type', 'route']
+});
+
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+
+// Middleware to track metrics
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    httpRequestDuration.observe(
+      { method: req.method, route: req.route?.path || 'unknown' },
+      duration
+    );
+    httpRequestsTotal.inc({
+      method: req.method,
+      route: req.route?.path || 'unknown',
+      status: res.statusCode
+    });
+  });
+  
+  next();
+});
+----
+
+ALERTS TO CONFIGURE:
+- API response time > 2s
+- Error rate > 5%
+- Memory usage > 80%
+- Disk usage > 90%
+- SSL certificate expiry < 7 days
+- Database connection failures
+- Google Ads API failures > 10/hour
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Metrics endpoint
+curl http://localhost:5000/metrics
+EXPECT: Prometheus format metrics
+
+Check 2: Grafana dashboards
+Access http://localhost:3001
+EXPECT: Dashboard with all metrics visible
+
+Check 3: Test alert
+Trigger high error rate
+EXPECT: Alert notification received
+----
+
+--------------------------------------------------------------------------------
+TASK 6.3: CREATE API DOCUMENTATION
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: docs/api.md, src/api/swagger.js
+
+SWAGGER DOCUMENTATION:
+----
+// src/api/swagger.js
+import swaggerJsdoc from 'swagger-jsdoc';
+import swaggerUi from 'swagger-ui-express';
+
+const options = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Analytics Dashboard API',
+      version: '1.0.0',
+      description: 'API for Google Analytics Dashboard with GA4 and Google Ads integration',
+    },
+    servers: [
+      {
+        url: 'http://localhost:5000',
+        description: 'Development server',
+      },
+      {
+        url: 'https://api.your-domain.com',
+        description: 'Production server',
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+    },
+  },
+  apis: ['./src/api/routes/*.js'],
+};
+
+const specs = swaggerJsdoc(options);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+
+// Example route documentation
+/**
+ * @swagger
+ * /api/analytics/query:
+ *   get:
+ *     summary: Get GA4 analytics data
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         required: true
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         required: true
+ *     responses:
+ *       200:
+ *         description: Analytics data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 users:
+ *                   type: number
+ *                 sessions:
+ *                   type: number
+ *                 bounceRate:
+ *                   type: number
+ */
+----
+
+API DOCUMENTATION STRUCTURE:
+----
+# docs/API.md
+
+## Analytics Dashboard API Documentation
+
+### Base URL
+- Development: http://localhost:5000
+- Production: https://api.your-domain.com
+
+### Authentication
+All endpoints require Bearer token authentication.
+Authorization: Bearer <supabase_jwt_token>
+
+### Endpoints
+
+#### Analytics
+
+##### GET /api/analytics/query
+Returns GA4 analytics data for the specified date range.
+
+**Parameters:**
+- startDate (required): Start date in YYYY-MM-DD format
+- endDate (required): End date in YYYY-MM-DD format
+
+**Response:**
+{
+  "users": 1234,
+  "sessions": 5678,
+  "bounceRate": 45.67,
+  "pageViews": 10000
+}
+
+##### GET /api/analytics/traffic-sources
+Returns traffic source breakdown.
+
+**Response:**
+{
+  "channels": [
+    {"name": "Paid Search", "users": 500, "sessions": 750},
+    {"name": "Display", "users": 300, "sessions": 450}
+  ]
+}
+
+[Continue for all endpoints...]
+
+### Error Responses
+All endpoints return errors in the following format:
+{
+  "error": {
+    "message": "Error description",
+    "status": 400,
+    "code": "ERROR_CODE"
+  }
+}
+
+### Rate Limiting
+- 100 requests per minute per user
+- 1000 requests per hour per user
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: Swagger UI accessible
+Navigate to http://localhost:5000/api-docs
+EXPECT: Interactive API documentation
+
+Check 2: All endpoints documented
+Review Swagger UI
+EXPECT: Every endpoint listed with parameters
+
+Check 3: Try it out feature
+Test endpoint from Swagger UI
+EXPECT: Successful API call with response
+----
+
+--------------------------------------------------------------------------------
+TASK 6.4: CREATE USER GUIDE
+--------------------------------------------------------------------------------
+STATUS: [ ] Not Started
+FILES: docs/USER_GUIDE.md, web/public/help/*
+
+USER GUIDE CONTENT:
+----
+# docs/USER_GUIDE.md
+
+# Analytics Dashboard User Guide
+
+## Table of Contents
+1. Getting Started
+2. Dashboard Overview
+3. Uploading PDF Bills
+4. Understanding Metrics
+5. Using Date Ranges
+6. Data Sources
+7. Troubleshooting
+8. FAQs
+
+## 1. Getting Started
+
+### Creating an Account
+1. Navigate to [your-domain.com]
+2. Click "Sign Up"
+3. Enter your email and password
+4. Check your email for verification (if enabled)
+5. Log in with your credentials
+
+### First Login
+After logging in, you'll see the main dashboard with:
+- Metric cards showing key performance indicators
+- Interactive charts
+- Date range selector
+- Upload button for PDF bills
+
+## 2. Dashboard Overview
+
+### Metric Cards
+The dashboard displays 8 key metrics:
+- **Total Campaigns**: Number of active campaigns
+- **Total Impressions**: Ad views (from Google Ads or mock data)
+- **Click Rate**: Percentage of impressions that resulted in clicks
+- **Total Sessions**: Website visits from paid channels
+- **Total Users**: Unique visitors from paid channels
+- **Average Bounce Rate**: Single-page session percentage
+- **Conversions**: Completed goal actions
+- **Total Spend**: Campaign expenditure
+
+### Data Source Indicators
+Each metric shows its data source:
+- Live (green dot): Real-time data from APIs
+- PDF (document icon): Data from uploaded bills
+- Mock (refresh icon): Sample data (when live data unavailable)
+
+## 3. Uploading PDF Bills
+
+### How to Upload
+1. Click the "Upload PDF" button
+2. Select your PDF bill (max 10MB)
+3. Wait for processing (usually < 10 seconds)
+4. Review parsed data
+5. Correct any errors if needed
+6. Click "Save"
+
+### Supported Formats
+- Google Ads billing statements
+- Facebook Ads invoices
+- Other standard advertising bills
+
+### Tips for Better Parsing
+- Ensure PDF text is selectable (not scanned images)
+- Upload complete bills with all pages
+- Check currency matches your account settings
+
+## 4. Understanding Metrics
+
+### Traffic Sources
+Shows where your paid traffic comes from:
+- Paid Search (Google Ads, Bing Ads)
+- Display (Banner ads)
+- Paid Video (YouTube ads)
+- Paid Social (Facebook, Instagram)
+
+### Device Breakdown
+Displays user devices:
+- Desktop
+- Mobile
+- Tablet
+
+### Geographic Distribution
+Shows user locations by country/region
+
+### Campaign Performance
+Lists individual campaign metrics:
+- Spend per campaign
+- Click-through rate
+- Conversion rate
+
+## 5. Using Date Ranges
+
+### Preset Ranges
+Quick selection options:
+- Last 7 days
+- Last 30 days
+- Last 90 days
+- This month
+- Last month
+
+### Custom Range
+1. Click "Custom Range"
+2. Select start date
+3. Select end date
+4. Click "Apply"
+
+### Data Refresh
+- Automatic refresh every 5 minutes
+- Manual refresh with refresh button
+- Last updated timestamp shown
+
+## 6. Data Sources
+
+### Data Priority
+1. **Google Ads API**: Live campaign data (when available)
+2. **Uploaded PDFs**: Override for spend data
+3. **Mock Data**: Fallback for unavailable metrics
+
+### Understanding Discrepancies
+- PDF data overrides API data for spend
+- API provides real-time metrics
+- Mock data is clearly labeled
+
+## 7. Troubleshooting
+
+### Common Issues
+
+#### Dashboard not loading
+- Check internet connection
+- Clear browser cache
+- Try logging out and back in
+
+#### PDF upload fails
+- Ensure file is under 10MB
+- Check PDF is not password-protected
+- Try re-saving PDF with different software
+
+#### Data not updating
+- Check date range selection
+- Click refresh button
+- Verify Google Ads connection
+
+#### Incorrect metrics
+- Review uploaded PDF data
+- Check date range matches expectations
+- Contact support for API issues
+
+## 8. FAQs
+
+**Q: How often is data updated?**
+A: Real-time data updates every 5 minutes. PDF data updates immediately upon upload.
+
+**Q: Can I export data?**
+A: Export functionality coming soon. Currently, you can take screenshots or copy values.
+
+**Q: Why do I see mock data?**
+A: Mock data appears when live APIs are unavailable or during initial setup.
+
+**Q: How do I connect my Google Ads account?**
+A: Google Ads connection is configured by your administrator. Contact support for setup.
+
+**Q: Can multiple users access the same data?**
+A: Currently, each user has their own PDF data. GA4 data is shared across all users.
+
+**Q: Is my data secure?**
+A: Yes, we use industry-standard encryption and row-level security to protect your data.
+
+## Support
+
+For additional help:
+- Email: support@your-domain.com
+- Documentation: docs.your-domain.com
+- Video tutorials: [YouTube channel]
+----
+
+IN-APP HELP:
+----
+// web/components/HelpButton.jsx
+export default function HelpButton({ topic }) {
+  const [showHelp, setShowHelp] = useState(false);
+  
+  const helpContent = {
+    metrics: 'These metrics show your campaign performance...',
+    upload: 'Upload PDF bills to track actual spend...',
+    dateRange: 'Select a date range to filter data...',
+    // Add more help topics
+  };
+  
+  return (
+    <>
+      <button
+        onClick={() => setShowHelp(true)}
+        className="text-gray-400 hover:text-gray-600"
+      >
+        <QuestionMarkCircleIcon className="h-5 w-5" />
+      </button>
+      
+      {showHelp && (
+        <div className="absolute z-10 bg-white rounded-lg shadow-lg p-4 max-w-xs">
+          <div className="flex justify-between items-start mb-2">
+            <h4 className="font-semibold">Help</h4>
+            <button onClick={() => setShowHelp(false)}>×</button>
+          </div>
+          <p className="text-sm text-gray-600">
+            {helpContent[topic]}
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+----
+
+CHECKS AFTER COMPLETION:
+----
+Check 1: User guide completeness
+Review all sections
+EXPECT: Covers all features and common tasks
+
+Check 2: Screenshots included
+Check for visual aids
+EXPECT: Screenshots for key features
+
+Check 3: In-app help works
+Click help buttons
+EXPECT: Contextual help appears
+
+Check 4: Guide accessibility
+Test guide formatting
+EXPECT: Clear headings, readable format
+----
+
+================================================================================
+COMPLETION CHECKLIST
+================================================================================
+
+PHASE 5: POLISH & TESTING
+[ ] Task 5.1: Add Loading States
+[ ] Task 5.2: Implement Comprehensive Error Handling  
+[ ] Task 5.3: Test Google Ads API Fallback
+[ ] Task 5.4: Performance Optimization Audit
+
+PHASE 6: DEPLOYMENT PREPARATION
+[ ] Task 6.1: Configure Production Environment
+[ ] Task 6.2: Set Up Monitoring and Alerting
+[ ] Task 6.3: Create API Documentation
+[ ] Task 6.4: Create User Guide
+
+POST-DEPLOYMENT:
+[ ] Run production smoke tests
+[ ] Monitor error rates for 24 hours
+[ ] Collect initial user feedback
+[ ] Plan Phase 2 features (multi-tenant, etc.)
+
+================================================================================
+
+
 ================================================================================
 TESTING CHECKLIST
 ================================================================================
