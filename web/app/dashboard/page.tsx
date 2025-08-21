@@ -14,6 +14,7 @@ import CampaignPerformanceTable from '@/components/CampaignPerformanceTable'
 import Link from 'next/link'
 import { RefreshCw } from 'lucide-react'
 import { debounce } from '@/utils/debounce'
+import HelpButton from '@/components/HelpButton'
 
 interface DashboardMetrics {
   totalCampaigns: number
@@ -287,7 +288,10 @@ export default function Dashboard() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h1>
+                <HelpButton topic="general" />
+              </div>
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <span>Welcome back, {user.email}</span>
                 {lastUpdated && (
@@ -388,6 +392,12 @@ export default function Dashboard() {
         )}
 
         {/* Metrics Grid */}
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Key Metrics</h2>
+            <HelpButton topic="metrics" />
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <MetricCard
               title="Total Campaigns"

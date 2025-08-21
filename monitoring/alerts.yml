@@ -1,0 +1,119 @@
+groups:
+  - name: application_alerts
+    interval: 30s
+    rules:
+      # API Server Alerts
+      - alert: APIServerDown
+        expr: up{job="api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API Server is down"
+          description: "API Server {{ $labels.instance }} has been down for more than 2 minutes."
+          
+      - alert: HighAPIResponseTime
+        expr: http_request_duration_seconds{job="api", quantile="0.95"} > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "High API response time"
+          description: "95th percentile response time is above 1 second (current: {{ $value }}s)"
+          
+      - alert: HighAPIErrorRate
+        expr: rate(http_requests_total{job="api", status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "High API error rate"
+          description: "API error rate is above 5% (current: {{ $value | humanizePercentage }})"
+      
+      # Web Server Alerts
+      - alert: WebServerDown
+        expr: up{job="web"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: web
+        annotations:
+          summary: "Web Server is down"
+          description: "Web Server {{ $labels.instance }} has been down for more than 2 minutes."
+          
+      # System Alerts
+      - alert: HighCPUUsage
+        expr: (100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is above 80% (current: {{ $value }}%)"
+          
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is above 90% (current: {{ $value }}%)"
+          
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "Low disk space"
+          description: "Disk space is below 10% (current: {{ $value }}%)"
+          
+      # Database Alerts
+      - alert: HighDatabaseConnectionCount
+        expr: pg_stat_database_numbackends{datname="analytics"} > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "High database connection count"
+          description: "Database connection count is above 80 (current: {{ $value }})"
+          
+      # Business Metrics Alerts
+      - alert: NoDataFromGoogleAnalytics
+        expr: time() - ga_last_successful_fetch_timestamp > 3600
+        for: 5m
+        labels:
+          severity: warning
+          service: google-analytics
+        annotations:
+          summary: "No data from Google Analytics"
+          description: "Haven't received data from Google Analytics for more than 1 hour"
+          
+      - alert: HighCacheHitRate
+        expr: cache_hit_rate < 0.5
+        for: 10m
+        labels:
+          severity: info
+          service: cache
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is below 50% (current: {{ $value | humanizePercentage }})"
+          
+      # SSL Certificate Expiry
+      - alert: SSLCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          service: ssl
+        annotations:
+          summary: "SSL Certificate expiring soon"
+          description: "SSL certificate will expire in less than 7 days"

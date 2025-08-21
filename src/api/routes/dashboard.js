@@ -270,6 +270,85 @@ const extractConversions = async (analyticsCore, startDate, endDate) => {
   }
 };
 
+/**
+ * @swagger
+ * /api/dashboard/spend/google-ads:
+ *   get:
+ *     summary: Get Google Ads spending data
+ *     description: Returns advertising spend data from Google Ads API with currency conversion
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         required: true
+ *         description: Start date in YYYY-MM-DD format
+ *         example: "2025-08-01"
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         required: true
+ *         description: End date in YYYY-MM-DD format
+ *         example: "2025-08-07"
+ *       - in: query
+ *         name: includeCredits
+ *         schema:
+ *           type: string
+ *           enum: ["true", "false"]
+ *           default: "true"
+ *         description: Include credit adjustments in spend calculation
+ *     responses:
+ *       200:
+ *         description: Google Ads spend data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 totalSpend:
+ *                   type: number
+ *                   format: float
+ *                   description: Total advertising spend
+ *                 currency:
+ *                   type: string
+ *                   description: Currency code
+ *                 breakdown:
+ *                   type: object
+ *                   description: Spend breakdown with credits
+ *                 campaigns:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                       spend:
+ *                         type: number
+ *                         format: float
+ *                 source:
+ *                   type: string
+ *                   enum: ["google_ads_api", "mock"]
+ *                 lastUpdated:
+ *                   type: string
+ *                   format: date-time
+ *       400:
+ *         description: Bad request - missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized - invalid or missing token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 // Add new route for real spend data with currency conversion
 router.get('/spend/google-ads', verifySupabaseToken, async (req, res) => {
   try {
@@ -392,6 +471,43 @@ router.get('/ads-metrics', verifySupabaseToken, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/dashboard/metrics:
+ *   get:
+ *     summary: Get aggregated dashboard metrics
+ *     description: Returns combined metrics from GA4, Google Ads, and user spend data
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date in YYYY-MM-DD format (default 2025-08-01)
+ *         example: "2025-08-01"
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date in YYYY-MM-DD format (default 2025-08-07)
+ *         example: "2025-08-07"
+ *     responses:
+ *       200:
+ *         description: Aggregated dashboard metrics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DashboardMetrics'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 // Update main metrics endpoint to use Google Ads
 router.get('/metrics', verifySupabaseToken, async (req, res) => {
   const { startDate = '2025-08-01', endDate = '2025-08-07' } = req.query;

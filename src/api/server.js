@@ -11,6 +11,8 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { performanceMiddleware, getPerformanceStats } from './middleware/performance.js';
 import { paginationMiddleware } from './middleware/pagination.js';
 import { apiLogger, requestLogger } from '../utils/logger.js';
+import { metricsMiddleware, metricsEndpoint } from '../utils/monitoring.js';
+import { setupSwagger } from './swagger.js';
 
 // Import route modules
 import analyticsRoutes from './routes/analytics.js';
@@ -92,6 +94,9 @@ class APIServer {
     // Performance monitoring middleware
     this.app.use(performanceMiddleware);
     
+    // Prometheus metrics middleware
+    this.app.use(metricsMiddleware);
+    
     // Pagination middleware for API routes
     this.app.use('/api/', paginationMiddleware(25, 100)); // Default 25 items, max 100
 
@@ -107,6 +112,12 @@ class APIServer {
   }
 
   initializeRoutes() {
+    // Setup Swagger API Documentation
+    setupSwagger(this.app);
+    
+    // Prometheus metrics endpoint
+    this.app.get('/api/metrics', metricsEndpoint);
+    
     // Cache stats endpoint
     this.app.get('/api/cache/stats', (req, res) => {
       res.json(getCacheStats());

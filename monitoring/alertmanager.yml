@@ -1,0 +1,63 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@your-domain.com'
+  smtp_auth_username: 'your-email@gmail.com'
+  smtp_auth_password: 'your-app-password'
+  smtp_require_tls: true
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      continue: true
+      
+    - match:
+        service: database
+      receiver: 'database-team'
+      
+    - match:
+        service: api
+      receiver: 'backend-team'
+
+receivers:
+  - name: 'default-receiver'
+    email_configs:
+      - to: 'team@your-domain.com'
+        send_resolved: true
+        headers:
+          Subject: '[Alert] {{ .GroupLabels.alertname }} - {{ .Status }}'
+        
+  - name: 'critical-receiver'
+    email_configs:
+      - to: 'oncall@your-domain.com'
+        send_resolved: true
+        headers:
+          Subject: '[CRITICAL] {{ .GroupLabels.alertname }} - {{ .Status }}'
+    webhook_configs:
+      - url: 'http://your-webhook-endpoint.com/critical'
+        send_resolved: true
+        
+  - name: 'database-team'
+    email_configs:
+      - to: 'database-team@your-domain.com'
+        send_resolved: true
+        
+  - name: 'backend-team'
+    email_configs:
+      - to: 'backend-team@your-domain.com'
+        send_resolved: true
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
